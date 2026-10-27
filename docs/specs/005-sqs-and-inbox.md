@@ -3,12 +3,12 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-005 |
-| Estado | Rascunho |
-| Revisão | 0.2 |
+| Estado | Consumo/inbox/DLQ implementados e verificados no recorte abaixo |
+| Revisão | 0.6 |
 | Requisitos relacionados | F02, M01–M07, M12, A07, D05, O01–O04 |
 | Dependências | SPEC-003, SPEC-004 e persistência da SPEC-002; eventos da SPEC-006 |
-| Aprovação do conteúdo | Revisão prevista antes da implementação; defaults recomendados |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Etapa SQS/LocalStack e inbox autorizada em 27/10/2026; defaults SQS-D01–D03 adotados neste recorte, mantendo SQS-D04/D05 |
+| Implementação | Consumidor, producer, inbox/origem, dispatcher/retomada e encaminhamento tardio de FAILED classificado pelo agendador |
 
 ## Objetivo e limites
 
@@ -24,7 +24,7 @@ Não promete exactly-once entre SQS e PostgreSQL. FIFO e deduplicação do broke
 | Entrada | wager-transactions.fifo |
 | DLQ | wager-transactions-dlq.fifo |
 | MessageGroupId | walletId, validado contra o comando; produtor local deve usar esse valor |
-| MessageDeduplicationId | messageId estável do envelope |
+| MessageDeduplicationId | messageId estável do envelope, ASCII conforme SQS-D04; na transferência manual à DLQ, transferId UUID estável |
 | Long polling | 20 segundos |
 | Lote de leitura | Até 10 mensagens, respeitando capacidade disponível |
 | Visibilidade | 60 segundos, renovada a cada 20 segundos enquanto houver trabalho válido |
@@ -58,9 +58,17 @@ Uma mensagem em DLQ pode liberar o grupo FIFO e mudar a ordem observável de dep
 }
 ```
 
-Validar JSON, tipo esperado, messageId não vazio, occurredAt ISO válido e contrato do comando. O horário de transporte não determina saldo nem substitui o relógio do processamento. O envelope não pode fornecer origem INTERNAL, estado terminal ou versão da wallet.
+Validar JSON, tipo esperado, messageId conforme SQS-D04, occurredAt ISO válido e contrato do comando. O horário de transporte não determina saldo nem substitui o relógio do processamento. O envelope não pode fornecer origem INTERNAL, estado terminal ou versão da wallet.
 
 messageId do envelope identifica a mensagem de negócio. MessageId e ReceiptHandle do SQS são metadados de transporte diferentes; nunca substituir a identidade da inbox pelo receipt handle. Um novo envio do mesmo comando pode ter outro envelope ID e ainda ser replay financeiro pela idempotency key.
+
+### Formato de messageId — SQS-D04
+
+Contrato adotado na revisão de 27/10/2026: string ASCII de 1 a 128 caracteres, formada somente por letras A–Z/a–z, dígitos, hífen e underscore (`^[A-Za-z0-9_-]{1,128}$`). O ID diferencia maiúsculas/minúsculas e não sofre trim, truncamento ou normalização. UUIDs e o exemplo `msg-123` são válidos. Rejeitar vazio, espaços, Unicode fora desse conjunto e comprimento excedido.
+
+O produtor valida esse formato antes de enviar e usa o próprio messageId como MessageDeduplicationId. O consumidor também valida o envelope, pois receber uma mensagem do SQS não comprova que seus campos internos seguiram o contrato. Corpo inválido segue o diagnóstico/DLQ sem criar inbox financeira válida. A identidade de transferência à DLQ é um UUID gerado pelo backend, não uma cópia de um messageId inválido.
+
+O subconjunto escolhido cabe no limite de 128 caracteres do identificador de deduplicação FIFO e evita divergências entre contrato e transporte. Referência: [SendMessage — MessageDeduplicationId](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html).
 
 ## Inbox e unidade de trabalho — SQS-D02
 
@@ -72,11 +80,17 @@ Persistir payloadHash da representação canônica do envelope validado: message
 - Mesmo envelope ID e mesmo hash já confirmado: não reaplicar efeitos financeiros. ACK só pode ser repetido se a disposição durável da entrega permitir; confirmação da inbox não dispensa transferência pendente à DLQ.
 - Mesmo envelope ID e hash diferente: INBOX_PAYLOAD_CONFLICT, sem sobrescrever a inbox original ou aplicar o novo conteúdo.
 - Comando já processado por HTTP, mas envelope novo: registrar a nova inbox e associar o replay no mesmo contexto SQL, sem novo efeito financeiro.
-- PENDING_REFERENCE: confirmar inbox e pendência/evento; fazer ACK. O worker persistente da SPEC-004 assume a continuação.
+- PENDING_REFERENCE: confirmar inbox, pendência/evento e origem recuperável descrita abaixo; fazer ACK. O worker persistente da SPEC-004 assume a continuação.
+
+Para uma pendência com entrada SQS, guardar antes do ACK uma origem canônica: vínculo à primeira inbox SQS confirmada para a transação, corpo original imutável e metadados necessários ao encaminhamento, incluindo MessageGroupId e MessageId do transporte. Preservar esses dados em armazenamento operacional restrito, separado dos logs, com integridade e vínculo à transação. A escolha da primeira origem ocorre sob o lock da wallet; envelopes posteriores de replay apontam a mesma transação e não substituem a origem canônica. Isso também vale quando uma pendência nasceu por HTTP e recebe seu primeiro envelope SQS depois. A captura de origem é metadado operacional, sem alterar o comando financeiro ou seu hash.
 
 Além do resultado financeiro, persistir a disposição da entrega: ACK_AFTER_COMMIT para resultados concluídos sem encaminhamento permanente, ou DLQ_REQUIRED para FAILED e demais casos que exigem DLQ. No segundo caso, guardar identidade estável da transferência, vínculo com inbox/diagnóstico e dlqConfirmedAt opcional. processedAt indica conclusão do tratamento financeiro ou diagnóstico, não conclusão automática da transferência. A disposição DLQ_REQUIRED deve ser durável antes de qualquer tentativa de remover a origem.
 
+Cada responsabilidade de transferência possui registro recuperável com transferId UUID, identidade da origem, destino, corpo imutável, MessageGroupId válido, attempts, nextAttemptAt, claimToken, leaseUntil, suspensão operacional e dlqConfirmedAt. O consumidor pode solicitar envio imediato após commit, mas a retomada também consulta esses registros no PostgreSQL e independe da presença da mensagem na fila de origem. Uma origem diagnóstica de conteúdo inválido é distinta da inbox original quando houver INBOX_PAYLOAD_CONFLICT; não sobrescrever seu corpo ou resultado confirmado.
+
 Ao tratar resultado FAILED ou replay de FAILED, criar/consultar a responsabilidade pela DLQ, mesmo que o resultado original tenha vindo por HTTP ou a inbox já exista. Uma disposição anterior de ACK não pode mascarar um encaminhamento obrigatório reconhecido nesta entrega. Atualizar os metadados operacionais em contexto seguro, respeitando a ordem de locks; não reabrir a transação financeira terminal.
+
+Um replay de inbox confirmada como pendência consulta também o estado financeiro durável corrente antes do atalho de ACK. Se tiver evoluído para FAILED, verificar/reutilizar a responsabilidade da origem correspondente ou criar o encaminhamento dessa entrega conforme a regra acima. Não concluir pelo resultado PENDING_REFERENCE antigo armazenado no momento do primeiro ACK.
 
 Manter a ordem de locks da aplicação: wallet antes dos registros financeiros/inbox quando houver wallet válida. Uma leitura inicial da inbox pode reconhecer replay, mas não adquire locks em ordem inversa nem autoriza um novo efeito.
 
@@ -94,7 +108,7 @@ Em falha SQL, rollback remove também a inbox ainda não confirmada. Não marcar
 | Falha de DeleteMessage após commit | Permitir redelivery e deduplicação; não desfazer o efeito financeiro |
 | Envelope inválido, conflito permanente de identidade/inbox ou comando impossível de admitir | Diagnóstico persistente seguro e transferência para DLQ; remover origem só após confirmação do destino |
 
-Para mensagens permanentes, usar envio explícito à DLQ, preservando corpo original e identificadores relevantes em canal restrito. Registrar metadados de falha e hash em armazenamento operacional durável quando o banco estiver acessível, sem criar uma WagerTransaction inválida ou inventar wallet. Proposta de chave diagnóstica: consumerName, MessageId do transporte e hash do corpo. O corpo completo fica na fila, não nos logs.
+Para mensagens permanentes, usar envio explícito à DLQ, preservando corpo original e identificadores relevantes em canal restrito. Registrar metadados de falha, hash e corpo necessário à transferência em armazenamento operacional durável quando o banco estiver acessível, sem criar uma WagerTransaction inválida ou inventar wallet. Proposta de chave diagnóstica: consumerName, MessageId do transporte e hash do corpo. O corpo completo fica apenas no armazenamento restrito de recuperação e na fila, nunca nos logs. Preservar o MessageGroupId válido dos metadados SQS, inclusive quando o walletId do corpo for inválido; MessageDeduplicationId da transferência usa transferId.
 
 Se o banco de diagnóstico estiver indisponível, tratar a entrega como transitória em vez de ACK silencioso. O redrive nativo permanece uma última proteção para mensagens não concluídas; sua chegada pode exigir reconstrução do diagnóstico pelos metadados da DLQ. Se o envio manual à DLQ falhar ou tiver resultado incerto, não apagar a origem. Duplicatas de diagnóstico/DLQ são possíveis; usar identidade estável, sem confiar só na janela FIFO.
 
@@ -109,6 +123,18 @@ FAILED financeiro só segue a condição segura da SPEC-003. Um JSON inválido n
 5. Se ocorrer crash antes de registrar a confirmação, retomar o envio; duplicata na DLQ é possível e precisa ser reconhecível pela identidade estável. Se a confirmação durável já existir, a redelivery pode concluir somente o ACK.
 
 A obrigação de DLQ tem precedência sobre o atalho de deduplicação/replay. Falha ou resultado incerto de envio/registro mantém a origem sem ACK; nunca reaplicar o efeito financeiro para tentar concluir transporte. O redrive nativo continua como proteção para entregas não concluídas, sem autorizar exclusão antecipada pela aplicação.
+
+### Encaminhamento tardio e dispatcher recuperável — SQS-D05
+
+PENDING_REFERENCE pode receber ACK antes de alcançar um estado terminal. Se depois terminar em FAILED no worker da SPEC-004, a mensagem original já pode estar ausente da fila. Havendo origem SQS canônica, a transação de recuperação que grava FAILED deve criar também uma responsabilidade DLQ_REQUIRED a partir dessa origem. Proteger a unicidade da responsabilidade tardia por `(transactionId, motivo PENDING_REFERENCE_FAILED)`, com transferId gerado uma única vez. Repetição da recuperação ou múltiplos envelopes já confirmados não criam uma transferência tardia por replay; usam a origem canônica. Se já existir encaminhamento para a mesma origem/conteúdo, reutilizar sua responsabilidade e confirmação.
+
+Um dispatcher operacional consulta transferências pendentes independentemente de ReceiveMessage. Pode executar como loop do role consumidor; não exige um novo serviço. Usa claims concorrentes com SKIP LOCKED, token e lease, envio fora da transação SQL e confirmação condicional, seguindo a disciplina e os limites iniciais de lease, timeout, backoff e suspensão de EVT-D03 na SPEC-006. Sua tabela e destino são de transferência operacional; esses registros não são novos eventos financeiros nem reabrem a transação FAILED.
+
+Após envio confirmado, persistir dlqConfirmedAt. Sem receipt handle vigente, não tentar DeleteMessage: o trabalho é exclusivamente concluir o encaminhamento tardio. Se a entrega original retornar, o consumidor consulta a responsabilidade correspondente antes de decidir ACK. Crash depois do envio e antes da confirmação pode duplicar a mensagem na DLQ com o mesmo transferId; a recuperação precisa reconhecer essa identidade, sem confiar apenas na janela FIFO.
+
+Se não houver origem SQS, registrar diagnóstico operacional durável por transactionId/failureCode, sem construir um envelope fictício. Um envelope novo recebido depois para essa transação FAILED tem sua própria inbox/disposição e segue o fluxo normal de DLQ. Expiração de referência e outras rejeições de negócio continuam REJECTED, com evento e sem transferência tardia.
+
+Transferências suspensas permanecem inspecionáveis e retomáveis por comando local documentado, com trilha de operador/horário e o mesmo corpo/transferId. Retenção automática da origem recuperável e das tarefas fica fora desta versão. Reinício não pode apagar a obrigação nem depender de memória do consumidor.
 
 ## Heartbeat e desligamento
 
@@ -140,11 +166,29 @@ No SIGTERM: parar novas leituras, aguardar as operações admitidas dentro do or
 | SQS-018 | Envio à DLQ confirmado, crash antes de persistir dlqConfirmedAt | Reenvio reconhecível pelo mesmo transferId; ACK só após confirmação durável |
 | SQS-019 | Envelope novo faz replay de FAILED criado por HTTP | Criar inbox/disposição DLQ_REQUIRED e concluir transferência, sem efeito financeiro |
 | SQS-020 | Redelivery após dlqConfirmedAt persistido, antes de DeleteMessage | Concluir ACK sem exigir nova aplicação financeira ou novo encaminhamento já confirmado |
+| SQS-021 | Enviar messageId com 1 e 128 caracteres do alfabeto permitido | Produtor e consumidor aceitam; MessageDeduplicationId preserva exatamente o ID |
+| SQS-022 | messageId vazio, com 129 caracteres, espaços ou Unicode não permitido | Produtor recusa antes do envio; envelope recebido por produtor incompatível segue diagnóstico/DLQ sem inbox financeira válida |
+| SQS-023 | ACK de pendência, FAILED posterior e crash antes do encaminhamento | Reinício do dispatcher encontra a tarefa SQL e envia o corpo original à DLQ, sem redelivery ou receipt handle |
+| SQS-024 | Vários envelopes confirmados para a mesma pendência e recuperação concorrente de FAILED | Uma origem canônica e uma responsabilidade tardia; nenhum efeito financeiro ou tarefa tardia duplicados |
+| SQS-025 | Envio tardio aceito pelo SQS; crash antes de dlqConfirmedAt | Retry preserva transferId/corpo; eventual duplicata reconhecível, sem reaplicação financeira |
+| SQS-026 | Falha ao salvar origem recuperável antes do ACK ou tarefa tardia no commit de FAILED | Rollback conjunto; não confirmar ACK/terminal deixando responsabilidade sem dados para retomada |
+| SQS-027 | Pendência HTTP recebe primeiro envelope SQS antes de falhar | Origem canônica é persistida antes do ACK; posterior FAILED tem encaminhamento tardio recuperável |
+| SQS-028 | Dois dispatchers, perda de lease e suspensão/retomada de uma transferência | Confirmação exige claim vigente; corpo/transferId preservados e obrigação não é descartada |
+| SQS-029 | Inbox confirmada como PENDING_REFERENCE retorna depois de a transação virar FAILED | Consumidor consulta o estado atual e conclui/reutiliza a obrigação de DLQ antes do ACK; snapshot antigo da inbox não ignora a falha |
 
 ## Testes e revisão
 
 Usar PostgreSQL e LocalStack reais para filas, visibility timeout, redrive e DeleteMessage. Injetar falhas após commit com barreira controlada, sem matar processo aleatoriamente e inferir o momento. Cada cenário financeiro termina em reconciliação de ledger e inspeção da inbox/outbox.
 
-SQS-D01 a SQS-D03 são defaults recomendados para revisão na implementação. Ajustar tempos em testes por configuração/relógio sem mudar a semântica. Um painel de inspeção de DLQ e redrive automático são opcionais; diagnóstico, tratamento de falhas e retomada são obrigatórios.
+SQS-D04 e SQS-D05 registram os ajustes de contrato/recuperação aceitos em 27/10/2026. Os defaults operacionais SQS-D01 a SQS-D03 foram adotados na etapa autorizada de consumo, com tempos ajustáveis nos testes e na configuração. Ajustar tempos em testes por configuração/relógio sem mudar a semântica. Um painel de inspeção de DLQ e redrive automático são opcionais; diagnóstico, comando mínimo de recuperação e dispatcher de transferências pendentes são obrigatórios.
 
-Rascunho 0.2 de 26/10/2026, revisado após análise independente para tornar a obrigação durável de DLQ prioritária sobre deduplicação/replay. Nenhum consumidor, migration, Compose ou teste desta spec está implementado. Aprovação de contrato e autorização de código/publicação permanecem separadas.
+O consumo, o dispatcher tardio e a recuperação classificada estão implementados.
+SQS-017 possui prova de redelivery real durante perda de heartbeat; SQS-025 cobre
+SIGKILL antes/depois do envio tardio e retomada por outro processo. São provas
+específicas; não se afirma cobertura de todas as combinações de falha possíveis.
+
+## Evidências e estado atual
+
+A implementação atual e seus testes estão no [mapa de evidências](../evidence.md).
+Os registros das etapas anteriores foram preservados no [histórico](../history/spec-005-stages.md).
+Essa separação mantém o contrato atual distinto das limitações que já foram resolvidas.

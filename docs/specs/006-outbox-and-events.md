@@ -3,12 +3,12 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-006 |
-| Estado | Rascunho |
-| Revisão | 0.1 |
+| Estado | Publisher verificado no recorte de PostgreSQL/LocalStack e processos descrito abaixo |
+| Revisão | 0.3 |
 | Requisitos relacionados | M04, M08–M12, D06, D08, O01–O04 |
 | Dependências | SPEC-002 e contratos de SPEC-003/SPEC-004; SQS/LocalStack da SPEC-005 |
-| Aprovação do conteúdo | Revisão prevista antes da implementação; defaults recomendados |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Etapa de publisher autorizada em 27/10/2026; EVT-D01/D02 preservados e defaults EVT-D03 aplicados |
+| Implementação | Classes/enfileiramento atômico, publisher concorrente, fencing, retry/suspensão e retomada auditada implementados |
 
 ## Objetivo e limites
 
@@ -110,6 +110,12 @@ Medir tentativas, suspensões, publicações e idade do evento pendente mais ant
 
 PostgreSQL e LocalStack reais; dois publishers em processos independentes; barreiras antes/depois de envio e confirmação; consumidor de teste com inbox própria para eventId. Inspecionar outbox, mensagens e ledger, sem inferir deduplicação apenas pela ausência de duplicata observada no broker.
 
-EVT-D01 a EVT-D03 são recomendações de contrato/configuração. Revisar limites após medir latência; não ampliar retries sem limitar recursos. Dashboard, ordem estrita de publicação e limpeza automática são opcionais. Entrega recuperável, fencing, diagnóstico e deduplicação demonstrada são parte do mínimo.
+EVT-D01/D02 e os defaults operacionais EVT-D03 foram aplicados nas etapas autorizadas, conforme evidência de revisão 0.3. Revisar limites após medir latência; não ampliar retries sem limitar recursos. Dashboard, ordem estrita de publicação e limpeza automática são opcionais. Entrega recuperável, fencing, diagnóstico e deduplicação demonstrada são parte do mínimo.
 
 Rascunho 0.1 de 26/10/2026. Não há publisher, consumidor de eventos de produção ou testes implementados. Não existe evidência de entrega executada nesta etapa documental.
+
+## Evidências e estado atual
+
+A implementação atual e seus testes estão no [mapa de evidências](../evidence.md).
+Os registros das etapas anteriores foram preservados no [histórico](../history/spec-006-stages.md).
+Essa separação mantém o contrato atual distinto das limitações que já foram resolvidas.

@@ -3,12 +3,12 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-003 |
-| Estado | Rascunho |
-| Revisão | 0.2 |
+| Estado | Verificada no recorte — processamento, transportes e recuperação restrita de FAILED |
+| Revisão | 0.7 |
 | Requisitos relacionados | F04, F09, D04, D05, D08, D09, D12, D15, A01–A07, A10, A11, M02, M04, M10, M11, O03, O04 |
 | Dependências | SPEC-001 e SPEC-002 aprovadas; coordenação com SPEC-004, SPEC-005 e SPEC-006 |
-| Aprovação do conteúdo | Revisão prevista antes da implementação; defaults recomendados identificados neste documento |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Etapa de abertura/processamento autorizada em 27/10/2026; PROC-D01/D02/D03 e limites de comando adotados no recorte de aplicação; HTTP/SQS verificados; recuperação restrita autorizada e verificada em 27/10/2026 |
+| Implementação | WagerTransaction, ProcessTransaction, hash/replay/conflitos e eventos/outbox; evidências abaixo |
 
 ## Objetivo e escopo
 
@@ -50,7 +50,7 @@ Content-Type: application/json
 
 Tipos externos: BET, WIN, LOSS, REFUND e ROLLBACK. `referenceExternalTransactionId` é opcional no contrato geral e obrigatório para REFUND/ROLLBACK. Ausência é diferente de string vazia; null não é uma referência válida. IDs de player/wallet são UUIDs. Money é validado sem normalização silenciosa.
 
-Defaults de limites: providerId até 64 caracteres; externalTransactionId, roundId, gameId e referência até 128; header de idempotência até 255; strings não vazias e sem espaços externos. Rejeitar campos desconhecidos, inclusive tentativas de fornecer origem, estado, saldo ou versão. Não inferir uma key quando o header faltar. Esses limites são configuração contratual proposta, não garantias já implementadas.
+Defaults de limites: providerId até 64 caracteres; externalTransactionId, roundId, gameId e referência até 128; header de idempotência até 255; strings não vazias e sem espaços externos. Rejeitar campos desconhecidos, inclusive tentativas de fornecer origem, estado, saldo ou versão. Não inferir uma key quando o header faltar. Esses limites estão implementados no validador compartilhado de comando, integrado aos transportes HTTP e SQS.
 
 ProviderId deve satisfazer formato e admissão na lista configurada de provedores, sem serviço remoto de consulta. Fixtures locais incluem provider-a e provider-b. A lista não autentica o chamador. Admitir somente BRL na primeira versão; outras moedas representáveis continuam válidas apenas no domínio/testes.
 
@@ -71,7 +71,14 @@ Não incluir header de idempotência, correlationId, messageId, occurredAt de tr
 
 O header é a fonte da key HTTP; no SQS, o campo equivalente é obrigatório. O hash é calculado do comando de negócio equivalente nos dois transportes.
 
-Persistir o resultado terminal com transactionId, status, failureCode quando houver, balance observado e status HTTP de submissão. Replay muda apenas idempotentReplay e metadados de transporte da resposta, nunca o saldo histórico. Se outras operações mudarem a wallet, não recalcular a resposta antiga pelo saldo atual.
+Persistir o resultado terminal com transactionId, status, failureCode quando houver e balance observado. A apresentação determina o status HTTP pela tabela estável do estado financeiro; o domínio/aplicação não armazenam código de transporte nos resultados novos. Replay muda apenas idempotentReplay e metadados de transporte da resposta, nunca o saldo histórico. Se outras operações mudarem a wallet, não recalcular a resposta antiga pelo saldo atual.
+
+A reidratação exige que a moeda do saldo histórico corresponda à do comando em
+PROCESSED, PENDING_REFERENCE, FAILED e rejeições após validação do contexto da wallet.
+CURRENCY_MISMATCH exige moedas distintas; WALLET_PLAYER_MISMATCH ocorre antes de
+validar moeda e conserva o saldo da wallet consultada. Essas rejeições antecipadas
+não autorizam inferir a moeda da wallet a partir do comando incompatível. Corrupção
+detectada retorna erro de integridade, sem reparar o snapshot ou reaplicar efeitos.
 
 Antes de terminal, uma pendência pode evoluir. Um reenvio de PENDING_REFERENCE consulta o estado durável corrente sem disparar novo efeito; o worker da SPEC-004 continua responsável pela execução. Consultas retornam o recurso atual conforme SPEC-007.
 
@@ -90,7 +97,7 @@ Quando WIN/LOSS informarem referência, aplicar validações de provider, player
 
 WIN/LOSS não herdam a igualdade de amount das reversões: WIN pode diferir do valor da BET referenciada e LOSS segue sua regra própria de zero. A igualdade integral pertence somente a REFUND/ROLLBACK.
 
-**Ponto de revisão antes de implementar:** exigir zero em LOSS e positividade em WIN/BET é uma política proposta, não uma alteração da capacidade de Money representar zero. Se o contrato do provedor precisar de WIN zero ou valor informativo em LOSS, revisar essa tabela e os testes.
+**Default aplicado na etapa autorizada em 27/10/2026:** exigir zero em LOSS e positividade em WIN/BET. A política não altera a capacidade de Money representar zero. Se o contrato do provedor precisar de WIN zero ou valor informativo em LOSS, revisar essa tabela e os testes.
 
 ## Estados e falhas
 
@@ -102,7 +109,6 @@ stateDiagram-v2
   PENDING --> PROCESSED
   PENDING --> REJECTED
   PENDING --> PENDING_REFERENCE
-  PENDING --> FAILED
   PENDING_REFERENCE --> PROCESSED
   PENDING_REFERENCE --> REJECTED
   PENDING_REFERENCE --> FAILED
@@ -124,7 +130,7 @@ PENDING_REFERENCE permanece nesse estado durante espera/reagendamento, sem produ
 | MONEY_OUT_OF_RANGE na entrada | 400 antes de aceitar a identidade, se o próprio amount exceder a faixa de Money |
 | MONEY_OUT_OF_RANGE no saldo resultante de crédito válido | REJECTED / 422, com resultado auditável, evento e replay estável; não é falha interna ou transitória |
 | REFERENCE_* e REVERSAL_* | Códigos da SPEC-004 |
-| INFRASTRUCTURE_UNAVAILABLE | 503 após rollback; retry permitido com a mesma key |
+| INFRASTRUCTURE_UNAVAILABLE | 503 sem presumir rollback; consultar/repetir com a mesma identidade para recuperar eventual commit confirmado |
 | PERMANENT_PROCESSING_FAILURE | FAILED auditável apenas com contexto válido e ausência comprovada de efeito confirmado |
 | INTERNAL_ERROR / códigos de corrupção persistida | 500, diagnóstico seguro; não converter automaticamente em rejeição ou FAILED financeiro |
 
@@ -134,7 +140,11 @@ Replay conserva a rejeição mesmo se outra operação liberar espaço no saldo 
 
 Persistir FAILED em transação de recuperação só é permitido depois de desfazer a tentativa, reler estado sob os mesmos locks e garantir que nenhum commit financeiro foi confirmado. Commit de resultado desconhecido exige consulta/replay pela identidade, nunca marcar FAILED por suposição. Se o banco não permite gravar auditoria com integridade, registrar falha operacional sem afirmar uma transação financeira terminal inexistente.
 
+Se FAILED encerrar uma PENDING_REFERENCE cuja origem SQS já recebeu ACK, a transação de recuperação deve confirmar também a responsabilidade durável de transferência tardia à DLQ definida na SPEC-005. O agendador não depende de nova entrega do comando. Para operação recebida somente por HTTP, persistir diagnóstico operacional recuperável e correlacionado, sem fabricar uma mensagem SQS; uma entrega SQS posterior segue o tratamento normal de replay de FAILED.
+
 Envelope recomendado para erros sem recurso aceito: `{ "error": { "code": "...", "message": "...", "correlationId": "..." } }`. Quando existe transação durável, devolver transactionId, status, failureCode, balance, idempotentReplay e correlationId. Resposta de sucesso usa os mesmos campos aplicáveis, omitindo failureCode ausente. Não expor stack, SQL, tokens ou payload financeiro completo em logs.
+
+O envelope de erro admite `error.details` apenas para campos definidos por código. WALLET_ALREADY_EXISTS exige `details.walletId`, conforme SPEC-002, para recuperar uma criação cuja resposta se perdeu. Os demais códigos não recebem detalhes técnicos automaticamente; nunca serializar a exceção original nesse campo.
 
 201 permanece reservado à abertura de wallet; submissão processada/replay processado usa 200; rejeição/replay rejeitado usa 422; pendência usa 202; FAILED na submissão usa 500. Consulta de qualquer recurso existente usa 200 e seu estado. Header de correlação é opcional; aceitar UUID válido ou gerar novo UUID, sem usar valor arbitrário como log injetável.
 
@@ -150,6 +160,12 @@ Envelope recomendado para erros sem recurso aceito: `{ "error": { "code": "...",
 Verificar key/hash já existentes antes de mascarar um conflito com um novo walletId inexistente. Consultas rápidas de identidade não adquirem locks financeiros em ordem inversa. Mesmo uma corrida que usa wallet IDs distintos é contida pelas unicidades globais; o perdedor relê a identidade e retorna conflito, sem efeitos.
 
 **Default PROC-D03:** até três tentativas completas para deadlock/serialização/timeout de lock classificados, com jitter entre tentativas e orçamento total de três segundos. Lock timeout inicial de 250 ms e statement timeout de dois segundos, configuráveis. Excedido o orçamento, 503; erro de domínio/identidade não recebe retry técnico. Cada tentativa usa novo contexto e objetos reconstruídos; descartar entidades de uma unidade revertida.
+
+Falha de conexão durante COMMIT pode ocultar uma confirmação durável. Classificar
+os erros conhecidos do driver como indisponibilidade, sem afirmar rollback nem
+criar FAILED. A política de retry interno acima cobre erros SQL transitórios;
+desconexão retorna indisponibilidade e a recuperação consulta/reenvia a mesma
+identidade em nova unidade. O resultado confirmado prevalece, inclusive com inbox.
 
 Reenvio de resultado terminal não reavalia saldo nem regras comerciais novas. Alteração da lista de provedores deve distinguir nova admissão de replay durável; não reabrir resultado antigo para aplicar nova configuração. Futuro guard de autenticação continua sendo responsabilidade separada.
 
@@ -182,11 +198,27 @@ U = unidade; I = PostgreSQL real; C = processos independentes; E = contrato HTTP
 | PROC-021 | Wallet em MAX recebe WIN válida de 0.01 | REJECTED/422 com MONEY_OUT_OF_RANGE, evento de rejeição, saldo/versão preservados e nenhum ledger novo; SQS confirma inbox e ACK após commit | U/I/E |
 | PROC-022 | Reenviar a WIN rejeitada por overflow após um débito reduzir saldo | Mesmo resultado/saldo histórico e replay true; nenhum crédito é reaplicado | I/E |
 | PROC-023 | Amount do pedido é maior que MAX antes de qualquer cálculo | 400 MONEY_OUT_OF_RANGE sem identidade financeira aceita, distinto do overflow do saldo resultante | U/I/E |
+| PROC-024 | Pendência com origem SQS já confirmada termina em FAILED no agendador | FAILED e obrigação tardia de DLQ no mesmo commit de recuperação, sem reaplicação financeira nem dependência de redelivery | I; SPEC-004/005 |
+| PROC-025 | Pendência recebida somente por HTTP termina em FAILED | Resultado terminal e diagnóstico recuperável, sem envelope SQS fictício; replay posterior preserva o resultado | I/E |
 
 ## Testes, defaults e conclusão
 
 Testar hash com strings canônicas esperadas e casos que alteram um campo por vez; não considerar uma função comparada consigo mesma evidência suficiente. Executar as disputas com barreiras reais e pelo menos três processos/contextos. Conferir saldo reconstruído pelo ledger, estado, snapshots, unicidades e eventos em cada fluxo financeiro.
 
-PROC-D01 (hash), PROC-D02 (valor/referência por kind), PROC-D03 (retry) e os limites de transporte são defaults recomendados para revisão ao aplicar a spec. Não há dependência de uma resposta adicional para continuar a documentação. São decisões de contrato/operação, não funcionalidades opcionais. Câmbio, IdP externo e barramento distribuído adicional estão fora desta entrega.
+PROC-D01 (hash), PROC-D02 (valor/referência por kind), PROC-D03 (retry) e os limites do comando foram adotados na etapa autorizada de aplicação em 27/10/2026. Limites operacionais são configuráveis por injeção; HTTP/SQS usam o mesmo processamento e estão integrados. Não há dependência de uma resposta adicional para continuar a documentação. São decisões de contrato/operação, não funcionalidades opcionais. Câmbio, IdP externo e barramento distribuído adicional estão fora desta entrega.
 
-Estado: rascunho 0.2, revisado em 26/10/2026 após análise independente. Classificação de overflow de crédito e seus cenários foram explicitados. Não há código, testes executados, aprovação integral do contrato, commit ou publicação autorizados por este documento.
+A revisão 0.6 separa o resultado financeiro do status HTTP. O decoder de storage
+lê e valida o campo legado sem reescrever terminais; apresentação traduz o estado
+para o mesmo status de submissão. Hash, identidade e saldos históricos são preservados.
+A revisão e os testes de compatibilidade estão no ADR 0004.
+
+A revisão 0.7 reforça a consistência da moeda na reidratação e comprova PROC-017
+com perda real da resposta de COMMIT no protocolo PostgreSQL. PROC-020 cobre
+consultas/replay de snapshots cuja moeda foi corrompida em fixture descartável.
+Não há mudança de hash, política financeira, migrations ou resultados históricos.
+
+## Evidências e estado atual
+
+A implementação atual e seus testes estão no [mapa de evidências](../evidence.md).
+Os registros das etapas anteriores foram preservados no [histórico](../history/spec-003-stages.md).
+Essa separação mantém o contrato atual distinto das limitações que já foram resolvidas.

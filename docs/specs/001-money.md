@@ -3,15 +3,15 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-001 |
-| Estado | Aprovada |
+| Estado | Verificada no domínio |
 | Revisão | 1.0 |
 | Requisitos relacionados | F04, F05, F06, F07, F08; suporte a D02, D03 e D07 |
 | Dependências de definição | Arquitetura e ADR 0001 |
-| Dependências de implementação | Decimal.js selecionada; versão e instalação pendentes da etapa de implementação |
+| Dependências de implementação | Decimal.js 10.6.0 fixada em package.json e bun.lock; Bun 1.4.4 |
 | Aprovação do conteúdo | Aprovado pelo responsável pelo projeto em 26/10/2026 |
-| Implementação | Não iniciada |
+| Implementação | Money e erros implementados; 22 cenários cobertos por 128 testes unitários em 27/10/2026 |
 
-Este documento define o contrato aprovado do objeto de valor monetário do núcleo financeiro, conforme a [arquitetura](../../ARCHITECTURE.md) e o [ADR 0001](../adr/0001-financial-core.md). A aprovação encerra as decisões funcionais desta spec; implementação e evidências de execução continuam pendentes.
+Este documento define o contrato aprovado do objeto de valor monetário do núcleo financeiro, conforme a [arquitetura](../../ARCHITECTURE.md) e o [ADR 0001](../adr/0001-financial-core.md). A etapa de Money foi autorizada em 27/10/2026 e seu domínio foi implementado e verificado. Persistência, integração HTTP/SQS e garantias de Wallet/ledger pertencem às etapas seguintes.
 
 ## Objetivo
 
@@ -48,7 +48,7 @@ Saldo negativo é proibido na Wallet; resultado negativo no objeto `Money` é ne
 
 ## Contrato de entrada
 
-O formato monetário abaixo define o contrato alvo. A declaração descreve a implementação futura; não é uma interface já existente no código:
+O formato monetário abaixo é implementado pela interface MoneyProps em [money.ts](../../src/modules/financial/domain/money/money.ts):
 
 ```ts
 interface MoneyProps {
@@ -112,7 +112,7 @@ Validar tipo, formato e magnitude de entrada, executar a operação decimal e ve
 
 Armazenar diretamente o decimal monetário, por exemplo `125.75`, e moeda separada; não converter para centavos inteiros como formato de persistência desta solução. O mapper deve preservar strings/decimais em ambos os sentidos. A validação de escala ocorre antes do banco, sem depender de coerção automática de NUMERIC para rejeitar excesso de casas.
 
-A versão da dependência será selecionada e fixada na etapa de implementação autorizada. Não há instalação ou migration nesta decisão documental. Agregações de reconciliação que possam exceder o intervalo intermediário precisarão de estratégia própria na SPEC-007, sem arredondamento nem perda de cancelamentos; precisão de trabalho 40 não é garantia para somatórios sem limite de tamanho.
+A implementação usa Decimal.js 10.6.0, fixada sem faixa de versão em package.json e bun.lock. O construtor privado é clonado com defaults próprios e precisão 40, preservando também isolamento dos limites de expoente globais. Agregações de reconciliação que possam exceder o intervalo intermediário seguem a estratégia da SPEC-007, sem arredondamento nem perda de cancelamentos; precisão de trabalho 40 não é garantia para somatórios sem limite de tamanho. Nenhuma migration pertence a esta etapa.
 
 Referências técnicas: [Decimal.js — configuração isolada](https://mikemcl.github.io/decimal.js/#clone), [Decimal.js — precisão](https://mikemcl.github.io/decimal.js/#precision) e [PostgreSQL — NUMERIC](https://www.postgresql.org/docs/current/datatype-numeric.html#DATATYPE-NUMERIC-DECIMAL).
 
@@ -141,7 +141,7 @@ declare class Money {
 }
 ```
 
-Esta declaração descreve a API pública alvo, sem expor o estado privado da implementação, e ainda não foi adicionada ao código. O tipo decimal fica encapsulado e não pode ser retornado por getters mutáveis.
+Esta declaração resume a API pública implementada em money.ts, sem expor o estado privado. O tipo decimal fica em campo privado de runtime e não é retornado por getters. A instância é congelada; currency é pública e somente leitura.
 
 ### Factories e valores com sinal — Q-MNY-04
 
@@ -190,11 +190,11 @@ Money não faz I/O, não controla transações, não adquire locks, não produz 
 
 O mapper futuro deverá preservar decimal e moeda sem passar por `Number`, `parseFloat` ou APIs equivalentes. A migration deverá proteger escala/intervalo e não-negatividade onde o tipo de registro exigir. Não confiar em coerção/arredondamento automático do banco para validar entrada externa com excesso de casas.
 
-Round-trip real com MikroORM/PostgreSQL pertence à etapa de persistência. A verificação unitária desta spec não comprova esse round-trip, nem saldo/ledger consistentes.
+Round-trip real com MikroORM/PostgreSQL foi comprovado na etapa subsequente de persistência, incluindo valores próximos de MAX e mappers de Wallet/ledger. A evidência está na SPEC-002; os testes unitários desta spec, isoladamente, não comprovam persistência.
 
 ## Cenários de aceite
 
-Os cenários são critérios de aceite aprovados do contrato alvo. A coluna de rastreabilidade aponta as decisões correspondentes; os testes ainda não foram implementados ou executados.
+Os cenários são critérios de aceite aprovados do contrato e estão cobertos por [money.test.ts](../../src/modules/financial/domain/money/money.test.ts), com IDs MNY-001 a MNY-022 nos nomes dos testes. A coluna de rastreabilidade aponta as decisões correspondentes.
 
 | ID | Dado / quando | Então | Rastreabilidade |
 |---|---|---|---|
@@ -227,14 +227,19 @@ Testes unitários com Bun, próximos ao domínio, sem inicializar NestJS, banco 
 
 Além dos exemplos, testar limites superior/inferior, zero, imutabilidade e invariantes algébricas dentro do intervalo suportado. Validar que Decimal.js com precisão de trabalho 40 não arredonda os casos de fronteira e que a configuração global não afeta o construtor exclusivo de Money. Um check de imports deve impedir dependências de framework/ORM no domínio quando o mecanismo de verificação arquitetural for implementado.
 
-Ainda não há arquivo `Money`, biblioteca decimal instalada nem script de testes. Não há resultados executados para esta spec. Nenhum comando novo é introduzido por esta etapa documental.
+### Evidências executadas em 27/10/2026
 
-Para marcar a spec como `Verificada` após implementação autorizada:
+Ambiente: macOS arm64, Bun 1.4.4, TypeScript 5.9.3 e Decimal.js 10.6.0. Base Git: 44710c3 com alterações locais desta etapa; não há um commit de implementação publicado a referenciar.
 
-1. Partir desta revisão aprovada e obter autorização para a etapa de implementação.
-2. Implementar as regras, os cenários aplicáveis e os testes unitários.
-3. Executar os checks pertinentes do projeto e os testes, registrando comandos, versão e resultado reais.
-4. Relacionar F04–F08 aos caminhos e evidências correspondentes, sem marcar garantias de persistência ou Wallet como atendidas por testes de Money.
+| Comando / revisão | Resultado |
+|---|---|
+| bun install --frozen-lockfile | Concluído, sem mudanças no lockfile |
+| bun run test:unit | 128 testes aprovados, zero falhas; 376 asserções; cobre MNY-001–MNY-022 |
+| bun run typecheck | Concluído sem erros |
+| bun run build | Concluído sem erros |
+| Revisão dos imports de produção | Money depende somente de Decimal.js e MoneyError local; sem framework, banco ou transporte |
+
+Arquivos: [Money e MoneyProps](../../src/modules/financial/domain/money/money.ts), [códigos e mensagens de erro](../../src/modules/financial/domain/money/money-error.ts), [testes unitários](../../src/modules/financial/domain/money/money.test.ts) e [scripts/dependências](../../package.json). A suíte inclui entradas malformadas, valores grandes, limites simétricos, imutabilidade, negativos internos e isolamento da configuração decimal antes e depois da importação do módulo. Na etapa inicial não houve prova de persistência. Posteriormente, a suite de integração da SPEC-002 comprovou round-trip PostgreSQL/MikroORM e saldo/ledger; contratos HTTP/SQS continuam pendentes.
 
 ## Decisões aprovadas
 
@@ -251,7 +256,7 @@ Para marcar a spec como `Verificada` após implementação autorizada:
 
 ## Dependências futuras e limites da aprovação
 
-Não há decisões funcionais pendentes nesta spec. A versão exata de Decimal.js será verificada e fixada na etapa de implementação autorizada, sem mudar o contrato aprovado. O nome de classes auxiliares e a organização interna dos arquivos são detalhes dessa implementação.
+Não há decisões funcionais pendentes nesta spec. Decimal.js 10.6.0 está fixada e os códigos aprovados são implementados por MoneyError. A revisão 1.0 do contrato permanece válida; mudanças futuras de comportamento exigem revisão explícita.
 
 A permissão de valores zero por tipo de transação será definida na SPEC-002/SPEC-003. Enforcement no PostgreSQL, round-trip do mapper, mapeamento HTTP e acumulação da reconciliação pertencem às respectivas specs. Esses itens não bloqueiam a aprovação do contrato de Money, mas continuam necessários para as funcionalidades responsáveis.
 
@@ -265,4 +270,4 @@ A permissão de valores zero por tipo de transação será definida na SPEC-002/
 | 0.4 | 26/10/2026 | Confirmação de aplicação exclusivamente BRL, incluindo entrada e apresentação; câmbio e API de cotações fora da primeira versão, preservando domínio multimoeda | Rascunho |
 | 1.0 | 26/10/2026 | Aprovação integral do contrato: catálogo local, validação lexical, reconstrução, valores internos com sinal, comparação, serialização e códigos de erro | Aprovada |
 
-Aprovação do conteúdo: concedida pelo responsável pelo projeto em 26/10/2026, abrangendo Q-MNY-01 a Q-MNY-08 e os critérios desta revisão. Implementação, instalação de biblioteca, commit e publicação dependem de autorização da etapa correspondente. Evidências de execução: ainda não existem.
+Aprovação do conteúdo: concedida pelo responsável pelo projeto em 26/10/2026, abrangendo Q-MNY-01 a Q-MNY-08. Implementação de Money autorizada em 27/10/2026, concluída e verificada nos comandos acima. Essa evidência é limitada ao domínio unitário; commit/publicação e implementação das demais specs não são declarados por este documento.

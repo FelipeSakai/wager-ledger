@@ -1,106 +1,104 @@
-# Roteiro de demonstração e validação operacional
+# Demonstração técnica — 15 a 20 minutos
 
-## Estado deste roteiro
+## Preparação
 
-Este roteiro orienta demonstrações técnicas e a validação operacional do Wager Ledger. Apenas o bootstrap está executável hoje. Os cenários financeiros, containers, scripts de seed e testes abaixo ainda serão implementados. Ainda não há medições de concorrência, cobertura ou performance.
-
-Documentos de apoio: [arquitetura](../ARCHITECTURE.md), [decisões](adr/README.md) e [requisitos](requirements.md).
-
-As [oito specs](specs/README.md) já organizam os contratos e cenários alvo. Money e Wallet/ledger estão aprovadas; os demais documentos são rascunhos recomendados para revisão ao aplicar. Este roteiro só ganhará comandos financeiros executáveis quando o código e o ambiente correspondentes existirem.
-
-## Objetivo da demonstração
-
-Explicar como o sistema impede um efeito financeiro duplicado e mantém saldo e ledger consistentes mesmo quando os processos falham. Sustentar cada afirmação com uma regra de domínio, garantia do banco e teste reproduzível.
-
-Agenda sugerida para uma demonstração técnica de 15–20 minutos:
-
-| Tempo aproximado | Conteúdo |
-|---|---|
-| 2 min | Problema, requisitos prioritários e limitações atuais |
-| 3 min | Diagrama, fronteira transacional e direção das dependências |
-| 7–10 min | Cenários financeiros, duplicatas, concorrência e recuperação |
-| 3 min | Testes, observabilidade, trade-offs e próximos passos |
-
-## O que pode ser demonstrado hoje
-
-Com Bun instalado, no diretório do projeto:
+Na raiz, com Bun 1.4.4 e Docker Compose:
 
 ```sh
 bun install --frozen-lockfile
+bun run setup
+bun run format:check
 bun run typecheck
 bun run build
-bun run start:prod
 ```
 
-Abrir `http://localhost:3000/` (ou a porta configurada). Resposta esperada:
+Execute API e workers em quatro terminais, conforme o [README](../README.md).
+O setup preserva volumes e configuração. Testes criam bancos/filas próprios;
+não exigem API/workers permanentes. Nunca editar/corromper dados reais para demonstrar falha.
 
-```json
-{ "name": "wager-ledger", "status": "bootstrap" }
-```
+## Sequência
 
-Esse resultado comprova inicialização e build; não comprova saúde do banco, SQS ou garantias financeiras. Encerrar o processo após a demonstração.
-
-## Preparação do ambiente de demonstração financeira
-
-Antes da execução dos cenários financeiros, deverão existir:
-
-- Docker Compose com PostgreSQL, LocalStack, migrations, filas e pelo menos três processos/instâncias da aplicação.
-- Seeds identificáveis por cenário; cada cenário usa sua própria wallet e IDs para não depender de execução anterior.
-- Scripts versionados para disparo HTTP/SQS, consulta, sincronização dos participantes e injeção de falhas.
-- Comandos documentados para setup, testes e teardown apenas dos recursos do ambiente de demonstração. Nunca apagar volumes/dados do usuário para preparar uma demo.
-- Registro de versões, commit usado, recursos do ambiente, comandos, resultados e logs sanitizados.
-- Uma consulta de reconciliação em fotografia consistente e consultas de ledger/inbox/outbox para comprovar cada efeito.
-
-Os nomes finais dos scripts e comandos serão adicionados quando existirem. A apresentação não deve depender de edição manual do banco para simular sucesso.
-
-## Cenários e evidências esperadas
-
-| Cenário | Ação planejada | Evidência necessária |
+| Tempo | Demonstração | Evidência |
 |---|---|---|
-| Abertura | Criar wallet com 100.00 BRL | Saldo 100.00, versão 1, OPENING e um crédito atômico |
-| Fluxo financeiro | BET 25.00 e WIN 10.00 na mesma wallet | Saldo 85.00; ledger de abertura, débito e crédito; reconciliação consistente |
-| Replay após outras operações | Reenviar a BET anterior depois da WIN | Resposta original da BET com saldo 75.00, replay true; saldo atual permanece 85.00 |
-| Conflito | Reutilizar a key alterando valor ou contexto | 409, sem alteração de saldo/ledger |
-| 50 duplicatas | Enviar a mesma BET 50 vezes em paralelo | Um débito e uma identidade financeira persistente; replays coerentes |
-| Disputa por saldo | Wallet nova de 100.00; duas BET de 80.00 em processos distintos | Uma PROCESSED, outra REJECTED; saldo 20.00 e exatamente um débito |
-| Wallets independentes | Operações simultâneas em wallets diferentes | Ambas avançam; ausência de lock global; ledger consistente em cada uma |
-| Três instâncias | Repetir disputa/duplicatas distribuindo entre três processos | PIDs/instâncias e barreira registrados; mesmas invariantes |
-| Fora de ordem | Entregar REFUND antes da BET referenciada | PENDING_REFERENCE durável, ACK após commit, posterior aplicação única |
-| Referência inexistente | Avançar relógio controlado ou aguardar política aprovada | Limite/TTL respeitado, rejeição com failure code próprio e evento |
-| Reversão inválida | Reverter WIN cujo débito inverso excederia o saldo | Rejeição específica de reversão, saldo preservado, nenhum ledger adicional |
-| Inbox/redelivery | Interromper consumidor depois do commit e antes de ACK | Mensagem entregue novamente, inbox impede repetição, saldo estável |
-| Outbox após commit | Interromper processo financeiro antes de publicar | Outbox já persistida; outro publisher conclui sem perda |
-| Dois publishers | Processar outbox concorrente e expirar um claim | Retomada; event IDs estáveis; nenhuma mensagem abandonada |
-| Crash após envio | Interromper publisher antes de marcar publicado | Possível duplicata demonstrada; consumidor deduplica por event ID |
-| Retry e DLQ | Causar falha transitória e depois mensagem permanente inválida | Backoff/limite, retomada e destino DLQ conforme classificação |
-| Reinício | Reiniciar com referências e eventos pendentes | Trabalho retomado, sem reaplicar efeito financeiro confirmado |
-| Constraints | Tentar saldo negativo, ledger mutável e duplicação por SQL de teste | Banco recusa com papel da aplicação; rollback preserva estado |
-| Observabilidade | Consultar logs, métricas e health durante falhas | Correlação, ausência de segredos e readiness refletindo dependências |
+| 2 min | Diagrama e commit financeiro comum | ARCHITECTURE.md |
+| 3 min | Abertura, BET, WIN, replay e reconciliação | examples/requests.http |
+| 4 min | 50 duplicatas, três PIDs e disputa de saldo | Casos de uso/PROC-011/012 |
+| 4 min | Crash, redelivery e DLQ tardia | SQS/outbox/referências |
+| 3 min | Shutdown, logs, métricas e limites | Health e suites operacionais |
 
-Em cada cenário financeiro, encerrar comparando saldo materializado com reconstrução do ledger. Para eventos, conferir também event ID, estado da outbox e deduplicação do consumidor. Contar ACK ou número de mensagens por si só não comprova correção financeira.
+Nos [exemplos HTTP](../examples/requests.http), abra 100.00 BRL, copie walletId,
+aposte 25.00 e credite WIN de 10.00. Repetir a BET retorna seu saldo histórico 75.00;
+GET da wallet retorna 85.00. Reconciliação deve retornar consistent=true e diferença zero.
+O [envelope SQS](../examples/sqs-bet.json) reutiliza a identidade da BET para provar
+replay entre canais. Ajuste walletId/playerId e use `bun run sqs:send`.
 
-## Pontos de revisão técnica
+## Comandos de prova
 
-1. Por que o lock fica na wallet e como wallets diferentes continuam em paralelo?
-2. Qual constraint impede duas instâncias de aplicar a mesma operação?
-3. O que acontece se a mesma identidade externa aparecer com outra key ou conteúdo?
-4. Como wallet, ledger, inbox e outbox compartilham o mesmo commit?
-5. O que pode acontecer entre publicar no SQS e marcar publicado no PostgreSQL?
-6. Como uma referência ausente sobrevive ao reinício e quando deixa de ser pendência?
-7. Por que uma rejeição de negócio recebe ACK, mas uma falha transitória exige retry?
-8. Como o banco impede alterações de ledger fora do caminho feliz da aplicação?
-9. Como a reconciliação evita comparar leituras de momentos diferentes?
-10. O que autenticação adiada significa e como o IdP seria integrado?
+```sh
+# Contratos HTTP, cursor e reconciliação
+bun test --timeout 30000 tests/integration/financial-http.test.ts
 
-## Trade-offs a declarar
+# Cinquenta duplicatas / três processos / disputa 80.00 sobre 100.00
+bun test --timeout 30000 tests/integration/financial-use-cases.test.ts -t 'PROC-011|PROC-012|REV-005'
 
-Defaults de operação e decisões de negócio dos novos rascunhos estão centralizados no índice de specs. A restrição adicional proposta de uma reversão efetivada por referência, mesmo entre tipos diferentes, deve ser revisada antes de apresentar esse comportamento como contrato acordado.
+# PostgreSQL confirma COMMIT, a resposta TCP se perde e o replay recupera o resultado
+bun test --timeout 30000 tests/integration/financial-commit-loss.test.ts
 
-- A wallet com muita disputa tem processamento serializado; não apresentar throughput sem medição.
-- Entrega de eventos é at-least-once, exigindo consumidores idempotentes.
-- Ledger de entrada única atende ao escopo; partidas dobradas não foram assumidas.
-- Sem IdP, a identidade do chamador HTTP não está garantida.
-- LocalStack comprova o fluxo local, mas não substitui validação de configuração operacional na AWS.
-- Testes de correção não comprovam capacidade de produção, disponibilidade ou segurança completas.
+# Heartbeat falha, há dois recebimentos e só um débito
+bun test --timeout 30000 tests/integration/financial-sqs.test.ts -t 'SQS-017'
 
-Quando o sistema estiver implementado, atualizar este roteiro com os comandos exatos, links para testes e resultados da validação vinculados ao commit utilizado. Manter falhas e limitações visíveis.
+# Crash antes/depois de enviar a DLQ tardia; outro processo retoma
+bun test --timeout 30000 tests/integration/financial-references.test.ts -t 'SQS-025'
+
+# EntryPoints reais: limpeza normal, travada e falha com recurso aberto
+bun test --timeout 30000 tests/integration/financial-worker-lifecycle.test.ts
+
+# Dois publishers / crash após envio / fencing e consumidor de teste
+bun test --timeout 30000 tests/integration/financial-outbox.test.ts
+
+# Correlação até ACK, readiness, métricas e SIGTERM HTTP
+bun test --timeout 30000 tests/integration/financial-observability.test.ts
+```
+
+PROC-017 usa um proxy TCP exclusivo de teste: observa COMMIT real do servidor e
+interrompe sua resposta. Outra conexão confirma o estado durável e o reenvio
+preserva efeito único, inbox e saldo histórico. Essa prova não envia mensagens SQS.
+
+SQS-017 usa expiração/redelivery reais e dois backends esperando o lock no PostgreSQL.
+SQS-025 mata o dispatcher em barreiras de envio real e espera a expiração do lease;
+a retomada conserva task/transferId/corpo. Deduplicação do broker pode suprimir uma
+segunda mensagem; não se promete exatamente uma entrega.
+
+Os testes de deadline executam os três entrypoints reais com um preload exclusivo
+do harness que trava ou falha na limpeza com recurso aberto. Produção não possui flags de simulação.
+Todos os cenários financeiros conferem saldo reconstruído pelo ledger.
+
+## Operação e encerramento
+
+```sh
+curl --fail http://127.0.0.1:3001/health/ready
+curl --fail http://127.0.0.1:3001/metrics
+bun run outbox:inspect
+bun run dlq:inspect
+bun run references:failures
+```
+
+Inspeções retornam metadados; não imprimir corpo ou credenciais. Métricas têm contexto
+por processo, sem IDs nas labels. Não somar gauges SQL repetidos entre papéis.
+Ctrl+C/SIGTERM para admissões, drena e fecha recursos com limite. Prazo excedido termina
+com código 1 e deixa responsabilidade durável para retomada, sem ACK especulativo.
+
+Para parar dependências preservando volumes: `docker compose stop`.
+
+## Perguntas para defender
+
+- Por que lock na wallet permite outras carteiras avançarem?
+- Qual índice/trigger protege cada invariante se outro processo gravar diretamente?
+- Como diferenciar replay, conflito, rejeição e commit com resultado incerto?
+- O que fica durável antes de ACK e antes de publicar?
+- Por que o consumidor precisa deduplicar eventos mesmo com FIFO?
+- O que acontece se SIGTERM chegar enquanto uma dependência não fecha?
+- Por que auth adiada e LocalStack não equivalem a exposição segura/AWS validada?
+
+Os critérios, testes e resultados estão no [mapa de evidências](evidence.md).
+A CI hospedada só terá resultado quando o workflow for publicado e executado.

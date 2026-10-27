@@ -3,12 +3,12 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-008 |
-| Estado | Rascunho |
-| Revisão | 0.1 |
+| Estado | Verificada no recorte local de health e instrumentação |
+| Revisão | 0.4 |
 | Requisitos relacionados | F01–F03, A13, O01–O08; suporte a M06, M07, M12 |
 | Dependências | Specs financeiras, SQS, outbox e consultas; ADR 0003 |
-| Aprovação do conteúdo | Revisão prevista antes da implementação; defaults recomendados |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Etapa health/observabilidade autorizada em 27/10/2026; OBS-D01–D03 adotados no recorte local, sem dependências novas |
+| Implementação | Porta de telemetria, logs/counters/histograms, coleta de backlog, health API/workers e shutdown verificados |
 
 ## Objetivo e escopo
 
@@ -33,7 +33,7 @@ Endpoint local recomendado `/metrics` em formato compatível com Prometheus. Sua
 | Métrica sugerida | Tipo / semântica |
 |---|---|
 | wager_transactions_total | Counter de conclusões/transições financeiras por status/kind; replay não é nova aplicação |
-| wager_duplicates_total | Counter por camada business/inbox/event-consumer |
+| wager_duplicates_total | Counter por camada business/inbox; não há event-consumer de produção |
 | wager_retries_total | Counter por componente e causa transitória controlada |
 | wager_lock_conflicts_total | Counter de deadlock/timeout/conflito de lock identificado |
 | wager_lock_wait_seconds | Histogram de espera pelo lock da wallet |
@@ -42,6 +42,7 @@ Endpoint local recomendado `/metrics` em formato compatível com Prometheus. Sua
 | outbox_suspended_total | Counter de suspensões recuperáveis |
 | outbox_lag_seconds | Gauge de idade do evento não publicado mais antigo, incluindo suspensos |
 | sqs_dlq_messages | Gauge aproximado de mensagens da DLQ e counter separado para transferências observadas |
+| dlq_transfer_pending / dlq_transfer_lag_seconds | Gauges de quantidade e idade da obrigação de transferência mais antiga, incluindo tarefas tardias e suspensas |
 | wallet_reconciliation_mismatches_total | Counter de divergências/integridade detectadas |
 | dependency_probe_failures_total | Counter por dependência/causa controlada |
 
@@ -66,7 +67,9 @@ No SIGTERM, readiness muda para 503, novas admissões cessam e a aplicação dre
 
 ## Execução local e migrations
 
-Docker Compose deverá disponibilizar PostgreSQL, LocalStack, bootstrap idempotente das filas, aplicação e papéis de worker. Versões de imagens e dependências serão fixadas na implementação. Não usar tags flutuantes como estratégia de reprodutibilidade.
+No recorte local implementado, Docker Compose disponibiliza PostgreSQL e LocalStack com digests fixados. Bootstrap idempotente de filas e quatro papéis da aplicação são comandos/processos Bun separados. Containerizar aplicação/workers permanece uma evolução operacional; não há prova de execução desses papéis em containers. Não usar tags flutuantes como estratégia de reprodutibilidade.
+
+O role consumidor também executa o dispatcher operacional de transferências DLQ definido em SQS-D05, mesmo quando ReceiveMessage não retorna trabalho. Seu lifecycle inclui polling SQL, claims e drenagem/expiração de leases. Operações suspensas de outbox e de DLQ têm comandos locais documentados de inspeção/retomada com trilha de operador/horário; dashboard continua opcional. Logs dessas transferências usam transferId e IDs correlacionados, sem corpo original ou receipt handle. A indisponibilidade do destino preserva as responsabilidades duráveis.
 
 Migrations versionadas e reversíveis são executadas por tarefa dedicada antes da admissão de tráfego, com papel separado do usuário SQL da aplicação. Réplicas não disputam sincronização automática de schema. O bootstrap de filas pode ser repetido sem apagar mensagens existentes.
 
@@ -74,9 +77,9 @@ Configuração fica em ambiente e `.env.example`, sem segredos reais no Git. Cad
 
 O harness deverá executar ao menos três instâncias/processos e dois publishers quando o cenário exigir, usando rede interna ou portas distintas para evitar colisão. Fixtures e falhas controladas pertencem a testes. Não preparar o ambiente removendo volumes/dados do usuário sem autorização específica.
 
-## Evidências e comandos futuros
+## Evidências e comandos
 
-Os scripts atuais do bootstrap continuam os únicos comandos existentes até a implementação. A etapa correspondente deverá acrescentar comandos documentados para migrations, testes unitários, integração e concorrência, com Bun como runner. Compose e scripts ainda não foram criados por esta spec.
+Os comandos executáveis e portas estão no README: API, worker:sqs, worker:outbox, worker:references, migrations e inspeções operacionais. test:unit e test:integration usam Bun. Compose e scripts de setup/filas já existem; esta etapa instrumenta os processos existentes, sem novo container de aplicação.
 
 Registrar commit, versões, ambiente, comandos, resultado e limitações. Testes não podem substituir completamente SQL/SQS por mocks. Cenários de concorrência usam processos e barreiras; crash tests documentam o ponto exato de interrupção. Atualizar [requirements](../requirements.md) e [demo](../demo.md) com evidências reais.
 
@@ -97,6 +100,7 @@ Registrar commit, versões, ambiente, comandos, resultado e limitações. Testes
 | OBS-011 | Aplicar/reverter/reaplicar migrations em banco descartável | Schema previsível e papel da aplicação sem privilégios de manutenção |
 | OBS-012 | Harness com três processos e publishers concorrentes | Evidências identificam processos, barreiras e consistência final |
 | OBS-013 | Probes/telemetria perdem acesso a dependência | Erro/desatualização reconhecidos, sem métricas falsas de sucesso |
+| OBS-014 | Fila de entrada vazia, mas transferência tardia/suspensa existe no banco | Backlog/lag e diagnóstico visíveis; dispatcher retoma tarefas elegíveis após reinício e comando operacional retoma as suspensas |
 
 ## Opcionais e revisão
 
@@ -104,4 +108,20 @@ Opcionais fora do mínimo: OpenTelemetry/tracing, dashboard Grafana, teste de ca
 
 IdP externo está adiado conforme ADR 0003; manter o ponto de extensão, sem atribuir segurança de produção ao serviço atual. Câmbio, saldo USD e frontend também estão fora da primeira versão e não são requisitos para verificar as garantias financeiras.
 
-OBS-D01 a OBS-D03 são defaults recomendados, com escolha de bibliotecas de logs/métricas a fechar no setup autorizado. Nenhum dashboard ou pacote adicional é instalado nesta fase. Rascunho 0.1 de 26/10/2026; implementação e evidências ainda inexistentes.
+OBS-D01 a OBS-D03 foram adotados na etapa autorizada: instrumentação tipada e formato Prometheus sem pacote adicional. A revisão 0.2 abaixo registra o limite documental anterior. A revisão 0.2 de 27/10/2026 aplica os ajustes autorizados de operação/diagnóstico do encaminhamento tardio de DLQ. Nenhum dashboard ou pacote adicional é instalado nesta fase; implementação e evidências ainda inexistentes.
+
+
+## Melhorias de lifecycle e correlação — revisão 0.4
+
+O deadline cobre trabalho e toda a limpeza, permanece referenciado e não é prorrogado
+por sinais repetidos. Limpeza normal termina 0; limpeza travada ou falha com recurso aberto excede o orçamento e
+termina 1. Os três entrypoints reais são exercitados com preload apenas de teste.
+Contextos próprios de operação/entrega passam IDs validados para retry, lock e ACK.
+Nenhum contexto global ou ID de cardinalidade alta em label foi acrescentado.
+A CI, a formatação e o setup único seguem o ADR 0005.
+
+## Evidências e estado atual
+
+A implementação atual e seus testes estão no [mapa de evidências](../evidence.md).
+Os registros das etapas anteriores foram preservados no [histórico](../history/spec-008-stages.md).
+Essa separação mantém o contrato atual distinto das limitações que já foram resolvidas.

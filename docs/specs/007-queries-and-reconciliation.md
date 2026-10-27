@@ -3,12 +3,12 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-007 |
-| Estado | Rascunho |
-| Revisão | 0.1 |
-| Requisitos relacionados | A03, A09, A10, A12, D03, D04, D07, O01, O02, O04 |
+| Estado | HTTP/SQL e telemetria local verificados; IdP externo adiado |
+| Revisão | 0.3 |
+| Requisitos relacionados | A03, A08, A09, A10, A12, D03, D04, D07, O01, O02, O04 |
 | Dependências | SPEC-001 e SPEC-002 aprovadas; resultados da SPEC-003 |
-| Aprovação do conteúdo | Revisão prevista antes da implementação; defaults recomendados |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Etapa de API HTTP/consultas autorizada em 27/10/2026; QRY-D01/D02 adotados, mantendo autenticação adiada |
+| Implementação | FinancialQueries, store de leitura, cursor HMAC, controllers e reconciliação executados em PostgreSQL real |
 
 ## Objetivo e escopo
 
@@ -18,7 +18,7 @@ Não inclui dashboard, exportação CSV/PDF, relatórios agregados, réplicas de
 
 ## Endpoints e respostas
 
-| Endpoint | Contrato recomendado |
+| Endpoint | Contrato |
 |---|---|
 | GET /wallets/:walletId | id, playerId, balance, version, createdAt e updatedAt |
 | GET /wallets/:walletId/ledger?cursor=...&limit=50 | items e nextCursor opcional, com lançamentos imutáveis e walletVersion |
@@ -30,19 +30,24 @@ Consulta de recurso existente usa 200, inclusive transações REJECTED/FAILED. R
 
 A resposta de consulta de wallet contém o saldo atual. Uma transação apresenta separadamente o saldo observado do seu resultado, que não deve ser substituído pelo saldo atual. Expor campos pertinentes, sem payloadHash, idempotency key completa, credenciais, claims de outbox ou metadados técnicos desnecessários.
 
+Se a resposta de POST /wallets se perder após commit, o cliente repete a criação com o mesmo playerId/currency. O 409 WALLET_ALREADY_EXISTS traz `error.details.walletId`, conforme SPEC-002, permitindo a consulta pelo endpoint existente. GET retorna o saldo/versão atuais, inclusive se houve movimentos desde a abertura; não reconstrói uma resposta histórica de criação nem exige um endpoint de busca adicional.
+
 OPENING é acessível por seu transactionId interno; não fabricar provider/externalTransactionId para fazê-la caber na consulta por provedor. Consultas de transações não atribuem idempotentReplay por si só; esse indicador pertence à submissão/replay.
 
-Os endpoints de negócio continuam sujeitos ao ponto de extensão de identidade planejado; a autenticação adiada não equivale a autorização comprovada para exposição pública.
+Os endpoints de negócio usam ProviderIdentityPort e guard HTTP implementados, com
+composição local sem autenticação. O IdP externo permanece adiado conforme o
+[ADR 0003](../adr/0003-scope-and-evidence.md); essa configuração não comprova
+autorização para exposição pública.
 
 ## Paginação estável do ledger — QRY-D01
 
-Default recomendado: ordem decrescente por walletVersion, do lançamento mais recente ao mais antigo. A unicidade por wallet/versão da SPEC-002 fornece ordem total. Não usar apenas createdAt, offset numérico ou ID aleatório para simular ordem financeira.
+Ordem adotada: decrescente por walletVersion, do lançamento mais recente ao mais antigo. A unicidade por wallet/versão da SPEC-002 fornece ordem total. Não usar apenas createdAt, offset numérico ou ID aleatório para simular ordem financeira.
 
 Primeira página captura a versão máxima visível da wallet e retorna até limit lançamentos com walletVersion menor ou igual a esse limite. Páginas seguintes usam a mesma versão superior e versões estritamente menores que a última retornada. Novas movimentações depois da primeira página não entram no percurso; uma nova consulta sem cursor as encontra.
 
 Default de limit é 50 e máximo 100; rejeitar zero, negativos, frações, valores acima do máximo e cursores maiores que 2 KiB. Uma wallet de abertura zero pode ter versão 1 e ledger vazio; responder items vazio sem nextCursor.
 
-Cursor opaco recomendado: payload versionado com walletId, upperVersion e lastVersion, codificado em base64url e assinado com HMAC. A chave de assinatura vem de configuração secreta estável entre instâncias, fora do Git. Base64 sozinho não fornece integridade. Validar assinatura, versão e vínculo à wallet; não confiar em valores decodificados do cliente.
+Cursor opaco: payload versionado com walletId, upperVersion e lastVersion, codificado em base64url e assinado com HMAC. A chave de assinatura vem de configuração secreta estável entre instâncias, fora do Git. Base64 sozinho não fornece integridade. Validar assinatura, versão e vínculo à wallet; não confiar em valores decodificados do cliente.
 
 Não há TTL de cursor na primeira versão: o ledger é imutável e a versão superior define o recorte. Rotação de chaves pode invalidar cursores antigos com erro claro. Não devolver contagem total cara a cada página. Índices devem atender wallet/versão, aproveitando a unicidade existente quando possível.
 
@@ -98,11 +103,24 @@ Interrupção da consulta não cria estado financeiro parcial, pois o fluxo é s
 | QRY-013 | Corrupção produz total finito fora da faixa operacional ou dado não finito | Diagnóstico de intervalo ou erro de integridade conforme contrato, sem arredondamento |
 | QRY-014 | Recurso ausente, banco indisponível ou ID inválido | 404/503/400 distintos e resposta segura |
 | QRY-015 | Reinício/instância diferente atende próximo cursor | Mesma política de assinatura e recorte; sem dependência de memória local |
+| QRY-016 | Resposta da criação se perde; repetir POST retorna walletId no conflito; consultar esse ID após movimentos | Recuperar a mesma wallet com saldo/versão atuais, sem nova abertura, carga inicial ou resposta histórica inventada |
 
 ## Testes e revisão
 
 Testes unitários de cursor/validação e integração em PostgreSQL real para fotografia, paginação e soma. Coordenar duas conexões por barreiras para inserir uma movimentação no instante relevante. Fixtures de corrupção usam ambiente descartável e papel administrativo de preparação, nunca uma permissão de escrita extra na aplicação.
 
-QRY-D01 e QRY-D02 são defaults recomendados para revisar ao implementar, especialmente assinatura do cursor e representação diagnóstica de valores fora da faixa operacional. Exportações, dashboard, projeção assíncrona e réplica de leitura são opcionais; as consultas e reconciliação descritas são parte do núcleo.
+QRY-D01 e QRY-D02 foram aplicados na etapa autorizada: HMAC-SHA256 com chave estável, recorte por versão, READ ONLY/REPEATABLE READ e diagnóstico NUMERIC exato. Exportações, dashboard, projeção assíncrona e réplica de leitura são opcionais; as consultas e reconciliação descritas são parte do núcleo.
 
-Rascunho 0.1 de 26/10/2026. Não há controllers, mappers de leitura, cursor ou testes desta spec implementados. Nenhuma garantia de reconciliação foi executada nesta etapa.
+O ajuste de recuperação da criação da revisão 0.2 foi implementado conforme a
+SPEC-002 revisão 1.1. Os defaults QRY-D01/QRY-D02 estão aplicados; as discussões e
+limitações das etapas anteriores estão no [histórico](../history/spec-007-stages.md).
+
+A reavaliação de 27/10/2026 cobre também moeda inconsistente no saldo histórico de
+PROCESSED, REJECTED e PENDING_REFERENCE. GET por ID/identidade externa e replay
+recusam o snapshot com erro seguro, preservando registros, saldo e ledger.
+
+## Evidências e estado atual
+
+A implementação atual e seus testes estão no [mapa de evidências](../evidence.md).
+Os registros das etapas anteriores foram preservados no [histórico](../history/spec-007-stages.md).
+Essa separação mantém o contrato atual distinto das limitações que já foram resolvidas.

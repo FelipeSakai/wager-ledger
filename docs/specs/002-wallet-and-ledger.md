@@ -3,15 +3,15 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-002 |
-| Estado | Aprovada |
-| Revisão | 1.0 |
+| Estado | Domínio, persistência, aplicação e HTTP verificados nos recortes abaixo; SQS futuro |
+| Revisão | 1.1 |
 | Requisitos relacionados | F03, F04, F09, D01–D08; suporte a A05, A06, A08, A12, M04, M10 e M11 |
 | Dependências de definição | SPEC-001 revisão 1.0; arquitetura; ADRs 0001 e 0002 |
 | Dependências de implementação | Money, unidade de trabalho MikroORM/PostgreSQL, migrations e contratos mínimos de transação/outbox |
-| Aprovação do conteúdo | Aprovado pelo responsável pelo projeto em 26/10/2026 |
-| Implementação | Não iniciada |
+| Aprovação do conteúdo | Base aprovada em 26/10/2026; ajustes de recuperação e persistência autorizados em 27/10/2026 |
+| Implementação | Wallet/WalletLedgerEntry e erros implementados; 149 testes novos de domínio e 38 de integração PostgreSQL/MikroORM em 27/10/2026; abertura por caso de uso verificada na evidência subsequente; transporte pendente |
 
-Este documento define o contrato aprovado de Wallet, abertura e ledger, conforme a [arquitetura](../../ARCHITECTURE.md). A [SPEC-001](001-money.md) permanece aprovada e não é reaberta aqui. As cinco decisões desta spec estão encerradas; implementação e evidências de execução continuam pendentes.
+Este documento define o contrato aprovado de Wallet, abertura e ledger, conforme a [arquitetura](../../ARCHITECTURE.md). A [SPEC-001](001-money.md) permanece verificada no domínio e não é reaberta aqui. As cinco decisões desta spec estão encerradas. A etapa de domínio foi autorizada e implementada em 27/10/2026; schema e adaptador transacional foram implementados e testados na etapa subsequente. Os casos de uso foram implementados na etapa subsequente abaixo; HTTP/SQS continuam pendentes.
 
 ## Objetivo
 
@@ -104,7 +104,7 @@ O contrato não cria autenticação ou cadastro próprio de players. Validar for
 | Situação | Status | Código / resultado |
 |---|---|---|
 | Wallet criada e confirmada | 201 | Recurso criado |
-| Mesmo player/moeda já existente | 409 | WALLET_ALREADY_EXISTS |
+| Mesmo player/moeda já existente | 409 | WALLET_ALREADY_EXISTS com error.details.walletId existente |
 | Payload/playerId inválido ou erro de entrada Money | 400 | INVALID_WALLET_INPUT ou código de Money preservado |
 | Moeda válida no domínio, mas não habilitada na aplicação | 400 | UNSUPPORTED_WALLET_CURRENCY |
 | Infraestrutura indisponível temporariamente | 503 | INFRASTRUCTURE_UNAVAILABLE, sem saldo parcial |
@@ -126,7 +126,20 @@ Conflito de moeda em operação ou criação de lançamento preserva CURRENCY_MI
 
 Todos esses erros terão código estável e mensagem legível, preservando saldo, versão e updatedAt quando ocorrerem no domínio. Mensagens não expõem SQL ou estado financeiro completo. O mapeamento da rejeição de débito em wagering será tratado na SPEC-003, sem acrescentar endpoints genéricos de débito/crédito a esta spec.
 
-Criar wallet não ganha idempotência de replay por esta spec: repetir uma abertura confirmada retorna conflito, sem nova carga inicial. Se o commit ocorrer e a resposta se perder, um novo POST retorna 409; as consultas permitirão inspecionar o recurso. Qualquer mudança para replay de criação exigirá revisão explícita do contrato.
+Criar wallet não ganha idempotência de replay por esta spec: repetir uma abertura confirmada retorna conflito, sem nova carga inicial. Se o commit ocorrer e a resposta se perder, um novo POST válido com o mesmo playerId/currency retorna 409 WALLET_ALREADY_EXISTS e `error.details.walletId`. O cliente usa esse ID em `GET /wallets/:walletId` para recuperar o recurso. O saldo consultado é o atual; não se promete a resposta histórica da criação.
+
+```json
+{
+  "error": {
+    "code": "WALLET_ALREADY_EXISTS",
+    "message": "A wallet already exists for this player and currency",
+    "correlationId": "0192f298-345e-7e38-af88-e43f851a819d",
+    "details": { "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37" }
+  }
+}
+```
+
+Resolver o ID pela mesma tupla playerId/currency validada que causou o conflito, após rollback de uma tentativa SQL abortada. Um initialBalance diferente no novo pedido não altera a carteira existente nem torna o conflito um top-up. A exposição do ID deve seguir a mesma política de acesso da consulta de wallet quando o ponto de identidade/autorização for integrado. O campo details contém apenas dados explicitamente permitidos pelo contrato, nunca detalhes da exceção SQL. Qualquer mudança para replay de criação exigirá revisão explícita do contrato.
 
 ### Estado de domínio
 
@@ -135,6 +148,16 @@ Wallet encapsula `id`, `playerId`, `currency`, `balance`, `version`, `createdAt`
 Factories: `Wallet.open` e `Wallet.rehydrate`; operações: `debit` e `credit`. Os métodos não fazem I/O. A mudança válida produz os dados necessários para o lançamento; o caso de uso persiste a mudança e seu ledger atomicamente. Uma falha de domínio deixa o agregado original sem alterações parciais de saldo, versão ou updatedAt.
 
 rehydrate reconstrói o estado persistido sem executar abertura, crédito ou débito. Deve detectar corrupção estrutural, como saldo negativo, moeda inconsistente ou versão inválida, sem gerar eventos ou novos lançamentos. Validação de integridade não é repetição de uma transição.
+
+### API de domínio implementada
+
+- [Wallet.open](../../src/modules/financial/domain/wallet/wallet.ts) recebe id, playerId, initialBalance como Money e at como Date. IDs são fornecidos pelo contexto do backend; a factory não consulta relógio ou gerador externo. Valida a representação textual de UUID sem selecionar uma versão específica nem alterar a caixa. Abre na versão 1 e copia o instante para createdAt/updatedAt.
+- `debit` e `credit` recebem ledgerEntryId, transactionId, money e at; devolvem uma [WalletLedgerEntry](../../src/modules/financial/domain/wallet/wallet-ledger-entry.ts) já validada. Calculam saldo/versão e constroem o lançamento completo antes de alterar a wallet. IDs ou timestamp inválidos do lançamento também preservam todo o agregado.
+- `Wallet.rehydrate` recebe WalletState, com balance em MoneyProps, currency explícita, versão e datas. Reconstrói Money internamente e encapsula corrupção monetária/contextual em INVALID_PERSISTED_WALLET. O estado de reconstrução do ledger usa MoneyProps para amount/before/after e encapsula falhas em INVALID_PERSISTED_LEDGER_ENTRY.
+- Wallet e ledger mantêm os instantes em campos privados e devolvem novas instâncias Date nos getters. A alteração de um Date de entrada ou de saída não muda o estado interno. Identidades e campos públicos ficam congelados; Wallet altera apenas seus campos privados por debit/credit.
+- Versões são inteiros positivos representáveis com segurança em number, que aqui é metadado, não dinheiro. Incremento sem representação segura lança RangeError interno antes de qualquer mutação; não é rejeição por saldo insuficiente nem introduz um novo failureCode financeiro. A representação física SQL ainda será definida na etapa de persistência.
+
+Wallet.open constrói apenas o agregado. A coordenação de OPENING, lançamento de abertura, eventos e commit pertence ao caso de uso futuro; os testes atuais montam o lançamento de abertura separadamente para verificar seu modelo. Não há endpoint financeiro executável nesta etapa.
 
 ## Abertura e tratamento de valores
 
@@ -173,6 +196,8 @@ Aprovado: acrescentar `walletVersion` ao lançamento para identificar a versão 
 
 Factory `WalletLedgerEntry.create` valida moeda, não-negatividade de before/after e aritmética exata: CREDIT soma, DEBIT subtrai. `rehydrate` reconstrói registro íntegro sem aplicar uma movimentação na wallet. Não há métodos de editar/excluir lançamento ou de mudar direction/transactionId.
 
+A factory implementada também valida IDs, versão e timestamp. Na versão 1, exige a raiz de abertura positiva: CREDIT com before zero. Os objetos de lançamento são imutáveis em runtime; isso não substitui privilégios e triggers append-only no PostgreSQL.
+
 O saldo reconstruído começa em zero e inclui o crédito OPENING quando existir. Não somar initialBalance outra vez, pois isso duplicaria a abertura. Partidas dobradas ficam fora desta versão.
 
 ## Garantias do schema — Q-WAL-04
@@ -209,6 +234,16 @@ CHECK isolado não garante relações entre tabelas. As migrations deverão impl
 
 A aplicação usa papel de banco sem privilégios de superusuário, alteração de schema ou desativação das proteções. O papel de migrations é separado. Rollback de migration será testado em ambiente descartável; não autoriza apagar histórico financeiro em ambiente com dados reais sem plano específico aprovado.
 
+### Preservar transições no adaptador MikroORM
+
+O adaptador deve representar cada movimentação por um UPDATE financeiro distinto, com seu before/after e incremento de versão, mesmo quando várias movimentações compartilham uma transação SQL. A porta de persistência precisa preservar os dados de cada transição; mapear somente a imagem final do agregado não satisfaz Q-WAL-04.
+
+MikroORM calcula mudanças comparando o estado original com o atual no flush. Por isso, não acumular duas mudanças no modelo persistente da mesma wallet para executar apenas um flush final. Aplicar e emitir cada transição em ordem, por flushes controlados dentro da transação explícita ou por UPDATEs explícitos no mesmo contexto transacional. A implementação deve controlar também auto-flush e sincronização do Identity Map. Nenhum flush intermediário autoriza commit, ACK ou publicação: manter o lock e executar um único commit externo, com todas as validações diferidas.
+
+Exemplo obrigatório: 100.00/v1 → 75.00/v2 → 100.00/v3 produz dois UPDATEs e dois lançamentos, além da OPENING já existente. Se qualquer etapa falhar, ambos os movimentos são revertidos. Uma abertura positiva seguida de movimento na mesma unidade SQL também precisa preservar a imagem de INSERT na versão 1 antes do UPDATE seguinte.
+
+Comprovar esse contrato cedo em integração com MikroORM e PostgreSQL reais, observando as escritas e o resultado do commit; um teste só de domínio ou SQL manual não demonstra a compatibilidade do adaptador. Referência: [detecção de mudanças no MikroORM](https://mikro-orm.io/docs/unit-of-work#how-mikroorm-detects-changes).
+
 ## Fluxos transacionais e concorrência
 
 ### Abrir wallet
@@ -231,7 +266,7 @@ Para falhas de infraestrutura, rollback e retry seguem classificação limitada 
 
 ## Cenários de aceite
 
-Os cenários são critérios de aceite aprovados do contrato alvo. Casos dependentes de specs futuras permanecem identificados; a aprovação documental não significa que os testes tenham sido implementados ou executados. Níveis: U = unidade; I = integração com PostgreSQL real; C = concorrência multiprocesso; E = contrato HTTP/SQS quando disponível.
+Os cenários são critérios de aceite aprovados do contrato alvo. Os aspectos de domínio já executados estão discriminados nas evidências abaixo; a indicação U/I não significa que a parte de integração esteja comprovada por um teste unitário. Níveis: U = unidade; I = integração com PostgreSQL real; C = concorrência multiprocesso; E = contrato HTTP/SQS quando disponível.
 
 | ID | Dado / quando | Então | Nível / vínculo |
 |---|---|---|---|
@@ -264,7 +299,7 @@ Os cenários são critérios de aceite aprovados do contrato alvo. Casos depende
 | WAL-027 | Usar mesma versão em dois lançamentos ou saltar versão de uma mudança | Banco rejeita e preserva a sequência válida | I; Q-WAL-02, Q-WAL-04 |
 | WAL-028 | Reconstruir saldo do ledger após vários débitos/créditos | Saldo coincide com o persistido, sem somar abertura duas vezes | I; D03, A12 |
 | WAL-029 | Reidratar wallet/ledger íntegros e tentar reidratar estados corruptos | Íntegros não criam movimentos; corrupção é sinalizada explicitamente | U/I; F04, Q-WAL-05 |
-| WAL-030 | Perder a resposta de abertura após commit e repetir o POST | Conflito, uma wallet e uma carga inicial; sem replay inventado | I/E; A08 |
+| WAL-030 | Perder a resposta de abertura após commit e repetir o POST | 409 WALLET_ALREADY_EXISTS com error.details.walletId; GET pelo ID recupera a wallet; uma única carga inicial | I/E; A08 |
 | WAL-031 | Alterar saldo e depois repor o valor inicial na mesma transação, omitindo um dos lançamentos | Commit falha; saldo final igual ao inicial não oculta uma transição sem ledger | I; Q-WAL-04 |
 | WAL-032 | Tentar inserir lançamento em uma lacuna ou raiz histórica que rompa before/after dos vizinhos | Banco rejeita a cadeia incoerente, mesmo se o saldo final da wallet não mudar | I; Q-WAL-02, Q-WAL-04 |
 | WAL-033 | Inspecionar a transação de abertura positiva | Origem INTERNAL, identidade estável vinculada à wallet e ausência de provider/jogo/rodada fictícios | U/I; Q-WAL-03 aprovada |
@@ -272,6 +307,10 @@ Os cenários são critérios de aceite aprovados do contrato alvo. Casos depende
 | WAL-035 | Tentar inserir segunda OPENING para uma wallet, com outro ID de transação | Banco impede duplicação de abertura e crédito | I; Q-WAL-03 aprovada, Q-WAL-04 |
 | WAL-036 | Submeter OPENING ou tentar assumir origem INTERNAL por HTTP/SQS externos | Entrada não obtém um crédito interno nem contorna as validações do provedor | E; Q-WAL-03 aprovada, SPEC-003/SPEC-005 |
 | WAL-037 | Provocar cada falha de entrada, débito, ledger e reconstrução prevista no contrato | Código correspondente e mensagem segura; saldo insuficiente distinto de corrupção; nenhuma mutação parcial no domínio | U/E quando aplicável; Q-WAL-05 |
+| WAL-038 | Via MikroORM, debitar 25.00 e creditar 25.00 em wallet 100.00/v1 na mesma unidade SQL | Dois UPDATEs incrementais e dois novos ledgers; commit único termina em 100.00/v3, sem colapsar a imagem intermediária | I; Q-WAL-04 |
+| WAL-039 | Falhar depois do primeiro flush de WAL-038 ou na validação final | Outra conexão vê apenas 100.00/v1 e o histórico anterior; nenhum movimento, evento ou versão parcial confirmado | I; Q-WAL-04 |
+| WAL-040 | Via MikroORM, abrir wallet positiva e movimentá-la antes do mesmo commit | INSERT preserva versão 1/OPENING; UPDATE gera versão 2 com ledger próprio; tudo confirma ou reverte junto | I; Q-WAL-04 |
+| WAL-041 | Repetir abertura com mesmo player/moeda e initialBalance válido diferente | 409 com o mesmo walletId; nenhuma alteração do saldo, versão, ledger ou outbox existentes | I/E; Q-WAL-05 |
 
 ## Estratégia de testes e conclusão
 
@@ -284,7 +323,65 @@ Os cenários são critérios de aceite aprovados do contrato alvo. Casos depende
 
 Os cenários de wagering e transporte só poderão ser verificados quando as specs responsáveis estiverem aprovadas e implementadas. Isso não autoriza omitir essas dependências numa entrega que alegue o fluxo financeiro completo.
 
-Ainda não existem Wallet, ledger, migrations, Compose ou testes desta spec. Nenhum script novo ou resultado de execução está sendo declarado. Para marcar como Verificada, partir desta revisão aprovada, implementar em etapa autorizada, executar os cenários aplicáveis e registrar caminhos, comandos e evidências reais na matriz. SQL de proteção precisa ser demonstrado com banco real e papel da aplicação.
+### Evidências de domínio executadas em 27/10/2026
+
+Ambiente: macOS arm64, Bun 1.4.4, TypeScript 5.9.3 e Decimal.js 10.6.0. Base Git 44710c3 com alterações locais das etapas já realizadas.
+
+| Comando / revisão | Resultado e limite |
+|---|---|
+| bun run test:unit | 277 testes aprovados, zero falhas e 797 asserções em três arquivos: 128 de Money e 149 novos de Wallet/ledger |
+| bun run typecheck | Concluído sem erros, incluindo os testes |
+| bun run build | Concluído sem erros; testes excluídos do build |
+| Revisão dos imports de produção | Wallet/ledger usam apenas módulos locais de domínio e recursos da linguagem, sem ORM/framework/transporte |
+
+Implementação: [wallet.ts](../../src/modules/financial/domain/wallet/wallet.ts), [wallet-ledger-entry.ts](../../src/modules/financial/domain/wallet/wallet-ledger-entry.ts), [wallet-error.ts](../../src/modules/financial/domain/wallet/wallet-error.ts) e [validações estruturais](../../src/modules/financial/domain/validation/domain-validation.ts). Testes: [wallet.test.ts](../../src/modules/financial/domain/wallet/wallet.test.ts) e [wallet-ledger-entry.test.ts](../../src/modules/financial/domain/wallet/wallet-ledger-entry.test.ts).
+
+| Cenários referenciados nos testes | Aspecto comprovado no domínio | Evidência ainda pendente |
+|---|---|---|
+| WAL-001–WAL-003 | Estado de abertura, versão 1, datas e modelo de crédito inicial montado no teste | OPENING persistida, outbox e atomicidade SQL |
+| WAL-007/WAL-008 | Moedas do domínio, identidade/entrada inválidas e preservação dos erros de Money | Restrição BRL na aplicação e respostas HTTP/SQS |
+| WAL-009–WAL-015 | Movimentos exatos, saldo zero/insuficiente, overflow, moedas e falha sem mutação parcial | Lock, ledger persistido e múltiplas instâncias |
+| WAL-017/WAL-026 | Aritmética/imutabilidade do lançamento e primeira mudança após abertura zero na versão 2 | Constraints e cadeia financeira no banco |
+| WAL-028/WAL-029/WAL-037 | Reconstrução do saldo em memória pelos lançamentos, rehydrate, códigos de integridade e cópias defensivas de datas | Reconciliação persistida, mappers ORM e tradução HTTP |
+
+Ao todo, 17 IDs WAL têm aspectos de domínio referenciados nas duas suites. A tabela acima registra os limites da primeira etapa; as provas posteriores de persistência seguem abaixo. A SPEC-002 permanece parcial até os casos de uso e contratos de transporte.
+
+### Evidências de persistência executadas em 27/10/2026
+
+Ambiente: Bun 1.4.4, MikroORM core/postgresql/migrations 7.2.5 fixados, PostgreSQL
+17.11 em Docker arm64 com digest fixo no Compose. Base 44710c3 com alterações locais.
+
+| Prova | Resultado |
+|---|---|
+| Suite completa `bun run test` | 315 testes aprovados, zero falhas e 1.041 asserções: 277 unitários + 38 de integração |
+| Migrations | Up/down/up em banco `wager_test_<uuid>` descartável; banco principal preservado |
+| Inicialização vazia | Container isolado com bootstrap SQL cria roles não privilegiadas; proprietário é wager_migrator |
+| WAL-038 | Débito/crédito 100.00→75.00→100.00 no mesmo commit: dois UPDATEs/ledgers, versão final 3; observador externo vê apenas estado confirmado |
+| WAL-039 | Falha após flush reverte wallet/transação/ledger/outbox; constraints diferidas também impedem commit inconsistente |
+| WAL-040 | Abertura positiva e movimento posterior na mesma unidade: versões 1/2 e dois lançamentos confirmados juntos |
+| Abertura e tipos sem movimento | Zero sem registros artificiais; positiva com OPENING interna, ledger e dois eventos; LOSS/rejeição sem mudança de saldo/versão |
+| Proteções SQL | Saldo negativo/não finito/overflow, movimento sem ledger, ledger sem saldo, saltos/arithmetic inválida, alteração de identidade/terminal e mutação de ledger recusados |
+| Unicidades | Wallet/player/moeda, OPENING/wallet, ledger/versão, ledger/transação, key global, identidade externa e uma reversão entre REFUND/ROLLBACK |
+| Concorrência real | Três processos Bun com PIDs distintos; espera pelo lock observada em pg_stat_activity; duas tentativas de 80.00 sobre 100.00 terminam em PROCESSED/REJECTED e saldo 20.00; outra wallet conclui enquanto a primeira está bloqueada |
+| Money/mappers | DecimalType string, NUMERIC(20,2), round-trip próximo de MAX e rehydrate de Wallet/ledger; reconciliação final em SQL |
+| Papéis | Aplicação sem DDL/superusuário/SET ROLE migrator; UPDATE/DELETE/TRUNCATE de ledger e desativação de trigger recusados |
+
+Código: [porta transacional](../../src/modules/financial/application/ports/financial-unit-of-work.ts),
+[adaptador](../../src/modules/financial/infrastructure/persistence/mikro-financial-unit-of-work.ts),
+[modelos ORM](../../src/modules/financial/infrastructure/persistence/records.ts),
+[mappers](../../src/modules/financial/infrastructure/persistence/mappers.ts),
+[migration SQL](../../src/modules/financial/infrastructure/persistence/migrations/financial-schema.ts),
+[Compose](../../compose.yaml) e [bootstrap de roles](../../database/init-roles.sql).
+Evidência: [integração](../../tests/integration/financial-persistence.test.ts) e
+[processo de corrida](../../tests/support/wallet-race-worker.ts).
+
+Limites: fixtures montam transações e envelopes de eventos para testar persistência;
+não são casos de uso de produção, classes de eventos ou implementação de hash
+canônico/replay. O índice REV-D01 foi exercitado sequencialmente entre tipos; as
+corridas de reversão/idempotência e os 50 reenvios continuam pendentes. Inbox,
+SQS/ACK, publisher, recuperação de pendências, consulta/reconciliação de produto e
+POST/409 com recuperação de walletId ainda não estão implementados. O rollback da
+migration remove o schema e foi executado somente no banco descartável.
 
 ## Decisões aprovadas
 
@@ -293,7 +390,7 @@ Ainda não existem Wallet, ledger, migrations, Compose ou testes desta spec. Nen
 | Q-WAL-01 | Magnitude de movimentação | Exigir valor estritamente positivo em debit/credit e ledger; abertura zero continua válida e LOSS não movimenta saldo | Domínio; regras de aceitação por tipo continuam na SPEC-003 | Aprovada em 26/10/2026 |
 | Q-WAL-02 | Versão no ledger | Acrescentar walletVersion, unicidade por wallet/versão e ordenação estável; abertura positiva na versão 1 e primeira mudança após abertura zero na 2 | Entidade, schema e futuras consultas; continuidade no banco detalhada em Q-WAL-04 | Aprovada em 26/10/2026 |
 | Q-WAL-03 | Identidade e eventos de OPENING | Origem INTERNAL definida pelo backend, identidade estável por wallet, sem provider/jogo/rodada fictícios; no máximo uma OPENING por wallet; eventos de processamento e saldo na mesma outbox apenas para abertura positiva | Contratos mínimos de transação/outbox e coerência com SPEC-003/SPEC-006; mecanismo de schema em Q-WAL-04 | Aprovada em 26/10/2026 |
-| Q-WAL-04 | Enforcement cruzado no banco | Constraints relacionais, permissões e validação diferida incremental por movimento, cobrindo abertura, múltiplas mudanças e ausência de ledger em ambas as direções, sem somar todo o histórico por operação | Schema, migrations, desempenho e verificação de integridade; SQL e evidências pendentes da implementação | Aprovada em 26/10/2026 |
+| Q-WAL-04 | Enforcement cruzado no banco | Constraints relacionais, permissões e validação diferida incremental por movimento, cobrindo abertura, múltiplas mudanças e ausência de ledger em ambas as direções, sem somar todo o histórico por operação | Schema, migrations, desempenho e verificação de integridade; SQL incremental implementado e coberto no recorte de integração acima | Aprovada em 26/10/2026 |
 | Q-WAL-05 | Contratos complementares e erros | UUIDs gerados pelo backend e playerId UUID válido; timestamps UTC; identidade/createdAt imutáveis; falha sem mutação parcial; códigos e status de abertura, débito, ledger e reconstrução definidos na seção de contratos, preservando erros de Money | API, domínio, mappers e tradução de erros; envelope geral na SPEC-003 | Aprovada em 26/10/2026 |
 
 ## Dependências futuras e limites da aprovação
@@ -312,5 +409,35 @@ A SPEC-003 detalhará transações externas, idempotência, aceitação de zero 
 | 0.4 | 26/10/2026 | Aprovação da origem INTERNAL, identidade estável e eventos da abertura positiva na outbox; cenários de duplicação e origem externa indevida | Rascunho |
 | 0.5 | 26/10/2026 | Aprovação da estratégia de proteção no PostgreSQL e detalhamento dos códigos de erro ainda propostos em Q-WAL-05; SQL e testes permanecem na implementação | Rascunho |
 | 1.0 | 26/10/2026 | Aprovação integral, incluindo UUIDs, timestamps, identidade imutável, ausência de mutação parcial, códigos de erro e status HTTP | Aprovada |
+| 1.1 | 27/10/2026 | Recuperação do walletId pelo conflito de criação e persistência de cada transição no adaptador MikroORM, mantendo um único commit | Ajustes autorizados após revisão |
 
-Aprovação do conteúdo: concedida pelo responsável pelo projeto em 26/10/2026, abrangendo Q-WAL-01 a Q-WAL-05 e os critérios desta revisão. Implementação, instalação de dependências, commit e publicação dependem de autorização da etapa correspondente. Evidências executadas: nenhuma.
+Aprovação do conteúdo: base 1.0 concedida pelo responsável pelo projeto em 26/10/2026, abrangendo Q-WAL-01 a Q-WAL-05; ajustes documentais da revisão 1.1 autorizados em 27/10/2026 após revisão das specs e arquitetura. A etapa de Wallet/ledger no domínio foi autorizada e executada em 27/10/2026, com evidências acima. Persistência, integrações e publicação continuam sujeitos ao escopo da etapa correspondente.
+
+## Evidência subsequente de aplicação — 27/10/2026
+
+[OpenWallet](../../src/modules/financial/application/use-cases/open-wallet.ts) gera IDs,
+valida player/BRL e confirma wallet, OPENING interna, ledger e eventos. Duplicação
+sequencial/concorrente devolve WALLET_ALREADY_EXISTS com details.walletId após resolver
+o vencedor, sem reaplicar saldo inicial. Aberturas zero/positiva/MAX e rollback após
+flush foram demonstrados em [PostgreSQL real](../../tests/integration/financial-use-cases.test.ts).
+Isso cobre o caso de uso de WAL-030/041, sem afirmar que POST/409 já exista em HTTP.
+
+WagerTransaction/ProcessTransaction exercitam movimentos/rejeições com outbox e
+replay. A suíte atual tem 412 testes aprovados, zero falhas e 1.427 asserções (342
+unitários + 70 de integração). Três processos e 50 reenvios geram um débito; saldo
+reconcilia com ledger. Typecheck/build/instalação congelada passaram. Limites antigos
+das seções anteriores descrevem cada etapa histórica; casos de uso e classes de
+eventos agora existem. HTTP/SQS, inbox, publisher, consultas/reconciliação de produto,
+agendador automático e recuperação de FAILED/DLQ permanecem pendentes. SPEC-002
+continua parcial até seus contratos de apresentação e evidências correspondentes.
+
+## Evidência subsequente de HTTP — 27/10/2026
+
+A [API](../../src/modules/financial/presentation/http/financial.controller.ts) expõe
+POST/GET wallet e traduz os erros aprovados, inclusive 409 com walletId recuperável.
+[Testes HTTP/TCP](../../tests/integration/financial-http.test.ts) comprovam criação,
+repetição após mudança de saldo, entrada inválida, BRL, conflito e rollback/503. O
+filtro preserva códigos de entrada Money e protege erro interno. Consultas e
+reconciliação estão documentadas na SPEC-007 revisão 0.3. A suíte atual tem 459
+aprovados/zero falhas/1.653 asserções; 354 unitários e 105 de integração. Limites das
+evidências anteriores são históricos: HTTP agora existe; SQS/inbox permanecem pendentes.
