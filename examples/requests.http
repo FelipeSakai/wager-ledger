@@ -1,0 +1,37 @@
+# Use an HTTP client extension or copy these bodies into curl.
+# Each new demonstration needs a fresh playerId and external IDs/idempotency keys.
+@baseUrl = http://127.0.0.1:3001
+@playerId = 00000000-0000-4000-8000-000000000101
+@walletId = REPLACE_WITH_WALLET_ID
+
+### Public readiness
+GET {{baseUrl}}/health/ready
+
+### Open with 100.00 BRL. Copy the returned id into walletId above.
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{"playerId":"{{playerId}}","initialBalance":{"amount":"100.00","currency":"BRL"}}
+
+### BET: expected balance 75.00 BRL.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:demo-bet-001
+
+{"providerId":"provider-a","externalTransactionId":"demo-bet-001","playerId":"{{playerId}}","walletId":"{{walletId}}","roundId":"demo-round-001","gameId":"demo-game","kind":"BET","money":{"amount":"25.00","currency":"BRL"}}
+
+### WIN: expected balance 85.00 BRL. Then repeat BET above: replay returns 75.00.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:demo-win-001
+
+{"providerId":"provider-a","externalTransactionId":"demo-win-001","playerId":"{{playerId}}","walletId":"{{walletId}}","roundId":"demo-round-001","gameId":"demo-game","kind":"WIN","money":{"amount":"10.00","currency":"BRL"}}
+
+### Current balance
+GET {{baseUrl}}/wallets/{{walletId}}
+
+### Ledger
+GET {{baseUrl}}/wallets/{{walletId}}/ledger?limit=50
+
+### Exact reconciliation; expected consistent=true and difference.amount="0.00".
+POST {{baseUrl}}/wallets/{{walletId}}/reconciliation

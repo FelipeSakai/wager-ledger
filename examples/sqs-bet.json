@@ -1,0 +1,16 @@
+{
+  "messageId": "demo-message-001",
+  "type": "WagerTransactionRequested",
+  "occurredAt": "2026-10-27T18:00:00.000Z",
+  "data": {
+    "providerId": "provider-a",
+    "externalTransactionId": "demo-bet-001",
+    "idempotencyKey": "provider-a:demo-bet-001",
+    "playerId": "00000000-0000-4000-8000-000000000101",
+    "walletId": "REPLACE_WITH_WALLET_ID",
+    "roundId": "demo-round-001",
+    "gameId": "demo-game",
+    "kind": "BET",
+    "money": { "amount": "25.00", "currency": "BRL" }
+  }
+}
