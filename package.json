@@ -18,11 +18,22 @@
     "test:unit": "bun test src/modules/financial/domain tests/unit",
     "test:integration": "bun test --timeout 30000 tests/integration",
     "sqs:up": "docker compose up -d --wait localstack",
+    "sqs:send": "bun scripts/send-sqs.ts",
+    "sqs:setup": "bun scripts/setup-sqs.ts",
+    "worker:outbox": "bun src/bootstrap/outbox-worker.ts",
+    "outbox:inspect": "bun scripts/outbox-recovery.ts inspect",
+    "outbox:resume": "bun scripts/outbox-recovery.ts resume",
+    "worker:sqs": "bun src/bootstrap/sqs-worker.ts",
+    "dlq:inspect": "bun scripts/dlq-recovery.ts inspect",
+    "dlq:resume": "bun scripts/dlq-recovery.ts resume",
     "db:up": "docker compose up -d --wait postgres",
     "db:stop": "docker compose stop postgres",
     "migration:up": "bun scripts/migrate.ts up",
     "migration:down": "bun scripts/migrate.ts down",
-    "migration:list": "bun scripts/migrate.ts list"
+    "migration:list": "bun scripts/migrate.ts list",
+    "worker:references": "bun src/bootstrap/reference-worker.ts",
+    "references:failures": "bun scripts/reference-failures.ts",
+    "setup": "bun scripts/setup-local.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "3.1157.0",
