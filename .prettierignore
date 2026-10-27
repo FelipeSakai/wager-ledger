@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+bun.lock
+.env*
+# Historical migrations retain their exact SQL and source text.
+src/modules/financial/infrastructure/persistence/migrations/

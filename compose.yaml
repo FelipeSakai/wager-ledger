@@ -1,0 +1,44 @@
+name: wager-ledger
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_USER: wager_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-wager_admin_local}
+      POSTGRES_DB: wager_ledger
+      MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:-wager_migrator_local}
+      APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-wager_app_local}
+    ports:
+      - 127.0.0.1:${POSTGRES_PORT:-55439}:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init-roles.sql:/docker-entrypoint-initdb.d/001-roles.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U wager_admin -d wager_ledger]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:4.0.3@sha256:17c2f79ca4e1f804eb912291a19713d4134806325ef0d21d4c1053161dfa72d0
+    environment:
+      SERVICES: sqs
+      EAGER_SERVICE_LOADING: '1'
+      PERSISTENCE: '1'
+      SQS_ENDPOINT_STRATEGY: path
+      LOCALSTACK_HOST: 127.0.0.1:${LOCALSTACK_PORT:-4566}
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - 127.0.0.1:${LOCALSTACK_PORT:-4566}:4566
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: [CMD-SHELL, 'awslocal sqs list-queues >/dev/null']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  localstack-data:
+  postgres-data:
