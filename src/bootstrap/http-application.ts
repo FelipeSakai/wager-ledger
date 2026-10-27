@@ -31,6 +31,7 @@ import type { DependencyProbes } from '../platform/observability/operational-con
 import { OperationalService } from '../platform/observability/operational-service';
 import { AppController } from './app.controller';
 import { createOrm } from './financial-database';
+import { setupHttpOpenApi } from './http-openapi';
 
 export interface HttpApplicationOptions {
   databaseUrl: string;
@@ -215,6 +216,7 @@ export async function createHttpApplication(
     operationsForApp.set(app, operations);
     app.useBodyParser('json', { limit: '32kb', strict: false });
     app.useGlobalFilters(new FinancialExceptionFilter(systemFinancialRuntime, diagnostics));
+    setupHttpOpenApi(app);
     await app.init();
     return app;
   } catch (error) {

@@ -1,4 +1,14 @@
 import {
+  ApiFinancialHttp,
+  ApiOpenWallet,
+  ApiGetWallet,
+  ApiGetWalletLedger,
+  ApiReconcileWallet,
+  ApiSubmitTransaction,
+  ApiGetTransaction,
+  ApiGetExternalTransaction,
+} from './openapi-operations';
+import {
   Body,
   Controller,
   Get,
@@ -21,6 +31,7 @@ import { submissionHttpStatus } from './submission-http-status';
 
 @Controller()
 @UseGuards(ProviderIdentityGuard)
+@ApiFinancialHttp()
 export class FinancialController {
   constructor(
     @Inject(OpenWallet) private readonly open: OpenWallet,
@@ -29,20 +40,24 @@ export class FinancialController {
   ) {}
 
   @Post('wallets')
+  @ApiOpenWallet()
   openWallet(@Body() body: unknown, @Req() request: FinancialHttpRequest, @Query() query: unknown) {
     this.noQuery(query);
     return this.open.execute(body, request.correlationId);
   }
   @Get('wallets/:walletId')
+  @ApiGetWallet()
   wallet(@Param('walletId') id: string, @Query() query: unknown) {
     this.noQuery(query);
     return this.queries.wallet(id);
   }
   @Get('wallets/:walletId/ledger')
+  @ApiGetWalletLedger()
   ledger(@Param('walletId') id: string, @Query() query: unknown) {
     return this.queries.ledger(id, query);
   }
   @Post('wallets/:walletId/reconciliation')
+  @ApiReconcileWallet()
   async reconciliation(
     @Param('walletId') id: string,
     @Query() query: unknown,
@@ -56,6 +71,7 @@ export class FinancialController {
     response.status(200).json(await this.queries.reconcile(id, request.correlationId!));
   }
   @Post('wagering/transactions')
+  @ApiSubmitTransaction()
   async submit(
     @Body() body: unknown,
     @Req() request: FinancialHttpRequest,
@@ -71,11 +87,13 @@ export class FinancialController {
     response.status(submissionHttpStatus(result.status)).json(result);
   }
   @Get('wagering/transactions/:transactionId')
+  @ApiGetTransaction()
   transaction(@Param('transactionId') id: string, @Query() query: unknown) {
     this.noQuery(query);
     return this.queries.transaction(id);
   }
   @Get('providers/:providerId/wagering/transactions/:externalTransactionId')
+  @ApiGetExternalTransaction()
   externalTransaction(
     @Param('providerId') providerId: string,
     @Param('externalTransactionId') externalId: string,
