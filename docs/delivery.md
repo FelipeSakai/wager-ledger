@@ -2,8 +2,11 @@
 
 ## Revisão atual
 
-As melhorias da avaliação técnica estão implementadas e organizadas em commits locais:
+A revisão atual acrescenta Swagger/OpenAPI às melhorias financeiras já publicadas:
 
+- Swagger UI em /docs, contrato /docs-json e exemplos executáveis para as rotas;
+- schemas HTTP que preservam dinheiro em strings e distinguem respostas por estado;
+- correção de falso conflito quando um commit ocorre entre as leituras de identidade;
 - integridade da moeda do saldo histórico e erro seguro em consultas/replay;
 - queda TCP real após COMMIT, recuperando efeito único e inbox pelo mesmo pool;
 - classificação de indisponibilidade quando o driver perde o código da desconexão;
@@ -13,36 +16,43 @@ As melhorias da avaliação técnica estão implementadas e organizadas em commi
 - CI Linux, Prettier fixado, setup único e exemplos HTTP/SQS;
 - README/arquitetura atuais, matriz de evidências e histórico separado.
 
-A implementação parte da base Git 44710c3 e foi organizada em commits por assunto,
-com autoria e committer FelipeSakai (felipesakaiipolito@gmail.com). Para consultar a
-sequência: `git log --reverse --oneline 44710c3..HEAD`. Nenhum push ou resultado
-hospedado de GitHub Actions foi produzido nesta etapa. Decisões no [ADR 0005](adr/0005-shutdown-failure-evidence-and-validation.md).
+A implementação financeira foi publicada em a0878d4, em nove commits com autoria e
+committer FelipeSakai. Essa base passou na [CI hospedada](https://github.com/FelipeSakai/wager-ledger/actions/runs/40572298699).
+Os resultados abaixo registram a validação local desta revisão. A execução
+hospedada correspondente deve ser conferida pelo SHA nas
+[execuções da branch main](https://github.com/FelipeSakai/wager-ledger/actions/workflows/ci.yml?query=branch%3Amain).
+Resultados anteriores estão no [histórico](history/delivery-stages.md).
+Decisões financeiras no [ADR 0005](adr/0005-shutdown-failure-evidence-and-validation.md).
 
 ## Checks e resultados
 
 | Verificação | Evidência |
 |---|---|
-| Instalação congelada | Bun 1.4.4/bun.lock; Prettier 3.9.10 apenas em desenvolvimento |
+| Instalação congelada | Bun 1.4.4/bun.lock; Swagger 12.0.5 fixa; Prettier 3.9.10 apenas em desenvolvimento |
 | Setup único | Executado; preservou .env/segredo e volumes; migrations/filas prontas |
 | Formatação | Prettier aprovado; migrations históricas excluídas da reformatação |
-| Arquitetura/typecheck/build | Aprovados; 85 arquivos de produção sem dependências invertidas/ciclos |
-| Suíte macOS arm64 | 639 aprovados, 0 falhas, 2.452 asserções; 25 arquivos; 49,43 s |
-| Suíte Ubuntu 24.04 AMD64 limpa | 639 aprovados, 0 falhas, 2.452 asserções; 25 arquivos; 99,96 s |
-| Smoke final | API e três workers reiniciados no build validado; live/ready/metrics 200 em 3001/3101/3102/3103 |
-| Distribuição | 443 unitários + 196 integrações PostgreSQL/LocalStack/processos |
+| Arquitetura/typecheck/build | Aprovados; 89 arquivos de produção sem dependências invertidas/ciclos |
+| Suíte macOS arm64 | 646 aprovados, 0 falhas, 2.685 asserções; 26 arquivos; 65,22 s |
+| Suíte Ubuntu 24.04 AMD64 limpa | 646 aprovados, 0 falhas, 2.685 asserções; 26 arquivos; 109,38 s; instalação congelada |
+| Revalidação antes da publicação | 646 aprovados, 0 falhas, 2.685 asserções; 53,88 s; formato, arquitetura, typecheck e build aprovados |
+| Smoke final | Build final ativo; Swagger/JSON e reconciliação pelo Try it out verificados |
+| Distribuição | 443 unitários + 203 integrações PostgreSQL/LocalStack/processos |
 
-A suíte macOS foi reexecutada durante a organização dos commits, com o resultado
-acima e sem mudança de código. O ensaio Ubuntu registra a validação anterior da mesma implementação.
-
-A mesma implementação final passou em macOS arm64 e Ubuntu 24.04 AMD64. A instalação Linux foi criada
-sem reaproveitar .env, node_modules, dist ou metadados Git da cópia de desenvolvimento.
+A validação atual inclui contrato, assets locais e execução dos exemplos Swagger
+via HTTP/PostgreSQL. O primeiro ensaio Ubuntu revelou um falso conflito em duplicatas
+HTTP: outra unidade podia confirmar entre a leitura da key e a identidade externa.
+A regressão determinística reproduziu o intervalo e distingue replay, payload
+conflitante e key diferente. A correção relê o vencedor por qualquer identidade e
+valida key/hash, preservando um único efeito. O ensaio final aprovou a mesma
+implementação nos dois ambientes, sem mudar regras financeiras ou schema.
 
 O ensaio Linux usa Ubuntu 24.04 AMD64 e binário oficial Bun 1.4.4 fixados por digest, cópia dos fontes sem
 .env/node_modules/dist/.git e instalação pelo lockfile. PostgreSQL 17.11 e LocalStack
 4.0.3 existentes foram reutilizados via rede Docker, com bancos/filas UUID próprios.
 A aplicação AMD64 executa por emulação no host arm64; as dependências PostgreSQL e
 LocalStack continuam nos containers existentes. Não se declara instalação Docker
-em máquina nova nem execução do runner GitHub hospedado.
+em máquina nova. A execução hospedada anterior é evidência da base a0878d4,
+não desta revisão Swagger.
 
 Bases do ensaio local:
 
@@ -52,6 +62,18 @@ Bases do ensaio local:
 - uname confirmou Linux x86_64; os-release confirmou Ubuntu 24.04.5 LTS.
 
 ## Cobertura acrescentada
+
+- QRY-017: financial-openapi.test.ts confere 11 operações, referências de schema,
+  tags sem duplicação, assets locais, headers e limites. Executa abertura, cinco
+  tipos de transação, replay, consultas, paginação e reconciliação usando exemplos
+  do documento servido. Valida campos obrigatórios nas respostas reais.
+- Try it out no navegador: abertura 100.00, BET 25.00, WIN 10.00, LOSS zero,
+  REFUND da BET e ROLLBACK da WIN. Saldo final 100.00 BRL; cinco movimentos,
+  reconciliação consistente e diferença 0.00. Replay da BET preserva 75.00.
+- PROC-003/006/007: um commit real entre as duas leituras de identidade retorna
+  replay para mesma key/hash, IDEMPOTENCY_CONFLICT para hash divergente e
+  EXTERNAL_TRANSACTION_CONFLICT para outra key. Três cenários com PostgreSQL
+  real e saldo reconstruído pelo ledger, sem resultados simulados.
 
 - PROC-017 observa CommandComplete/COMMIT do PostgreSQL real e reseta TCP antes
   de entregar a resposta ao cliente. Outra conexão confirma a transação durável;
@@ -89,7 +111,9 @@ O [mapa de evidências](evidence.md) relaciona os critérios aos testes.
 O [workflow](../.github/workflows/ci.yml) usa Ubuntu 24.04, Actions fixadas por SHA,
 Bun fixado, permissões de leitura, setup, estilo, arquitetura/typecheck, build e
 suite real. Logs de dependências aparecem em falha; o encerramento preserva volumes.
-Seu resultado remoto só pode ser confirmado após publicação/execução.
+A base a0878d4 já teve execução hospedada aprovada. Para conferir esta revisão,
+consulte a execução correspondente ao SHA nas
+[execuções da CI](https://github.com/FelipeSakai/wager-ledger/actions/workflows/ci.yml).
 
 Sem IdP, deploy AWS, tracing/dashboard, benchmark ou consumidor de eventos de produção.
 FAILED automático continua restrito a INVALID_REFERENCE_STATE após recuperação segura.

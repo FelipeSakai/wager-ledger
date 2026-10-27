@@ -86,7 +86,7 @@ As decisões dos documentos descrevem o destino aprovado. Não trate um recurso 
 ## Validação e conclusão
 
 - Comandos atualmente disponíveis: `bun install --frozen-lockfile`, `bun run setup:env`, `bun run sqs:up`, `bun run sqs:setup`, `bun run sqs:send`, `bun run worker:sqs`, `bun run worker:outbox`, `bun run worker:references`, `bun run references:failures`, `bun run outbox:inspect`, `bun run outbox:resume`, `bun run dlq:inspect`, `bun run dlq:resume`, `bun run test`, `bun run test:unit`, `bun run test:integration`, `bun run db:up`, `bun run db:stop`, `bun run migration:up`, `bun run migration:down`, `bun run migration:list`, `bun run typecheck`, `bun run build`, `bun run start`, `bun run dev`, `bun run start:prod`.
-- A suíte atual tem 443 testes unitários e 196 de integração PostgreSQL/MikroORM/HTTP/SQS: 639 aprovados, 2.452 asserções em 27/10/2026. Compose, migrations up/down/up, roles separadas e corrida com três processos estão comprovados. Integração exige o banco real; OpenWallet, ProcessTransaction, ResumePendingTransaction, hash/replay e quatro classes de eventos estão verificados. API HTTP, consultas, cursor HMAC e reconciliação READ ONLY/REPEATABLE READ estão verificados. LocalStack 4.0.3, inbox/origem, consumidor, heartbeat/redrive e dispatcher de DLQ estão verificados. Publisher de eventos financeiros, fencing, heartbeat, suspensão/retomada auditada e deduplicação persistente de teste estão verificados. Scheduler e recuperação restrita de FAILED estão verificados. INVALID_REFERENCE_STATE exige rollback confirmado, nova unidade/lock, mesma pendência/agendamento, ausência de efeito e referência ainda inválida. Não classificar exceções genéricas, corrupção da própria pendência/wallet ou commit incerto. ACK após commit e encaminhamento de DLQ têm testes reais; publicação financeira foi comprovada no LocalStack com processos independentes. Health, métricas e logs foram verificados com PostgreSQL/LocalStack e SIGTERM em processo HTTP separado. Não ampliar a prova de FAILED para qualquer erro nem alegar deploy AWS. A prova atual inclui FAILED automático no caso de uso após corrupção de referência preparada somente em banco UUID descartável, com diagnóstico e tarefa tardia atômicos.
+- Resultados atuais da suíte e ambientes estão em docs/evidence.md e docs/delivery.md; esses documentos concentram os totais de validação. Compose, migrations up/down/up, roles separadas e corrida com três processos estão comprovados. Integração exige o banco real; OpenWallet, ProcessTransaction, ResumePendingTransaction, hash/replay e quatro classes de eventos estão verificados. API HTTP, consultas, cursor HMAC e reconciliação READ ONLY/REPEATABLE READ estão verificados. LocalStack 4.0.3, inbox/origem, consumidor, heartbeat/redrive e dispatcher de DLQ estão verificados. Publisher de eventos financeiros, fencing, heartbeat, suspensão/retomada auditada e deduplicação persistente de teste estão verificados. Scheduler e recuperação restrita de FAILED estão verificados. INVALID_REFERENCE_STATE exige rollback confirmado, nova unidade/lock, mesma pendência/agendamento, ausência de efeito e referência ainda inválida. Não classificar exceções genéricas, corrupção da própria pendência/wallet ou commit incerto. ACK após commit e encaminhamento de DLQ têm testes reais; publicação financeira foi comprovada no LocalStack com processos independentes. Health, métricas e logs foram verificados com PostgreSQL/LocalStack e SIGTERM em processo HTTP separado. Não ampliar a prova de FAILED para qualquer erro nem alegar deploy AWS. A prova atual inclui FAILED automático no caso de uso após corrupção de referência preparada somente em banco UUID descartável, com diagnóstico e tarefa tardia atômicos.
 - Mudanças de código exigem os checks existentes pertinentes e testes de comportamento do recurso. Domínio: Bun test. Integração: PostgreSQL e LocalStack reais. Concorrência: processos independentes e barreiras de sincronização, sem simulação sequencial.
 - Mudanças só em Markdown exigem revisão de links relativos, coerência entre documentos e ausência de alegações de implementação não comprovadas. Não crie testes que apenas repitam texto ou implementação.
 - Testes financeiros terminam verificando saldo persistido igual ao saldo reconstruído pelo ledger. Inclua duplicatas, concorrência e falhas nos limites de commit/ACK/publicação.
@@ -194,3 +194,30 @@ Preservar os arquivos finais e validar snapshots intermediários ao organizar os
 commits. Scripts do package.json entram junto com os arquivos de implementação
 que executam. .env, dependências instaladas, builds, logs e arquivos temporários
 ficam fora do histórico. A definição de CI não comprova execução hospedada.
+
+## Swagger/OpenAPI — etapa autorizada em 27/10/2026
+
+O responsável solicitou Swagger funcional para testar rotas pela interface. Usar
+@nestjs/swagger 12.0.5 fixa, compatível com NestJS 12; UI /docs e JSON /docs-json.
+Metadados e schemas ficam na apresentação HTTP e a composição no bootstrap.
+Preservar inputs unknown, validadores, contratos monetários e fronteira SQL.
+Documentação usa strings para dinheiro, exemplos explícitos e Idempotency-Key
+obrigatória. Abertura de wallet e consulta têm formatos de resposta distintos.
+Não anunciar auth Bearer inexistente nem enviar o documento a validador externo.
+Testar documento/refs/assets e os exemplos contra HTTP/PostgreSQL reais, além de
+Try it out no navegador. Essa etapa não inclui novo commit/push automático.
+
+A regressão da etapa Swagger revelou commit entre as duas leituras de identidade
+sob READ COMMITTED. ProcessTransaction deve reconhecer o mesmo vencedor por key
+ou identidade externa e validar key/hash antes de decidir replay/conflito.
+financial-use-cases.test.ts cobre os três cenários com commit real entre leituras;
+não afrouxar o teste HTTP concorrente nem aumentar retries para ocultar esse caso.
+
+## Publicação do Swagger — autorização em 27/10/2026
+
+O responsável solicitou testar novamente e publicar as mudanças. Esta autorização
+inclui os commits da correção de identidade, Swagger e documentação, com autor e
+committer FelipeSakai <felipesakaiipolito@gmail.com>, e push normal para origin/main.
+Ela substitui a restrição anterior de não publicar automaticamente esta etapa.
+Validar a suíte completa antes dos commits e conferir a nova execução da CI após
+push. Preservar configuração global, dados locais e histórico existente.

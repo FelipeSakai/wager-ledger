@@ -3,9 +3,9 @@
 | Campo | Conteúdo |
 |---|---|
 | ID | SPEC-007 |
-| Estado | HTTP/SQL e telemetria local verificados; IdP externo adiado |
-| Revisão | 0.3 |
-| Requisitos relacionados | A03, A08, A09, A10, A12, D03, D04, D07, O01, O02, O04 |
+| Estado | HTTP/SQL, telemetria local e documentação OpenAPI implementados e verificados; IdP adiado |
+| Revisão | 0.4 |
+| Requisitos relacionados | A03, A08, A09, A10, A12, D03, D04, D07, O01, O02, O04, O09 |
 | Dependências | SPEC-001 e SPEC-002 aprovadas; resultados da SPEC-003 |
 | Aprovação do conteúdo | Etapa de API HTTP/consultas autorizada em 27/10/2026; QRY-D01/D02 adotados, mantendo autenticação adiada |
 | Implementação | FinancialQueries, store de leitura, cursor HMAC, controllers e reconciliação executados em PostgreSQL real |
@@ -38,6 +38,21 @@ Os endpoints de negócio usam ProviderIdentityPort e guard HTTP implementados, c
 composição local sem autenticação. O IdP externo permanece adiado conforme o
 [ADR 0003](../adr/0003-scope-and-evidence.md); essa configuração não comprova
 autorização para exposição pública.
+
+## Documentação OpenAPI — melhoria autorizada
+
+GET /docs apresenta Swagger UI e GET /docs-json exporta OpenAPI 3.0.3. Cobrir as
+sete operações financeiras, identificação, health e métricas. Parâmetros de rota,
+limit/cursor, Idempotency-Key e correlação devem refletir os contratos existentes.
+Schemas de dinheiro usam strings; separar a resposta de abertura da consulta de
+wallet e os resultados de submissão PROCESSED/PENDING_REFERENCE/REJECTED/FAILED.
+
+Try it out utiliza a mesma origem e exige os mesmos campos/headers da API real.
+Exemplos de BET/WIN/LOSS/REFUND/ROLLBACK não podem enviar campos internos nem
+fabricar uma wallet existente. O operador copia walletId/playerId, muda identidades
+para operações novas e preserva corpo/key para replay. GET da documentação não
+cria recursos financeiros. Assets são locais; não usar validador externo ou esquema
+de autenticação sem implementação. A validação de negócio permanece nos casos de uso.
 
 ## Paginação estável do ledger — QRY-D01
 
@@ -104,6 +119,7 @@ Interrupção da consulta não cria estado financeiro parcial, pois o fluxo é s
 | QRY-014 | Recurso ausente, banco indisponível ou ID inválido | 404/503/400 distintos e resposta segura |
 | QRY-015 | Reinício/instância diferente atende próximo cursor | Mesma política de assinatura e recorte; sem dependência de memória local |
 | QRY-016 | Resposta da criação se perde; repetir POST retorna walletId no conflito; consultar esse ID após movimentos | Recuperar a mesma wallet com saldo/versão atuais, sem nova abertura, carga inicial ou resposta histórica inventada |
+| QRY-017 | Abrir Swagger/OpenAPI e executar exemplos como cliente | Documento resolvível, assets locais, headers corretos, dinheiro em strings, chamadas reais e saldo reconciliado |
 
 ## Testes e revisão
 

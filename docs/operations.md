@@ -37,6 +37,23 @@ automática e geração de snapshots estão desabilitadas.
 
 `bun run db:stop` para o PostgreSQL preservando o volume. LocalStack é um serviço separado descrito abaixo. A API exige banco e migrations; o endpoint raiz não verifica saúde das dependências.
 
+## Swagger e contrato OpenAPI
+
+Com `PORT=3001 bun run dev` ou `PORT=3001 bun run start:prod`, acesse:
+
+- [Swagger UI](http://127.0.0.1:3001/docs): parâmetros, headers, exemplos e Try it out.
+- [Documento OpenAPI JSON](http://127.0.0.1:3001/docs-json): exportável para clientes HTTP.
+
+O fluxo de abertura, cópia de walletId e submissão está no [README](../README.md#testar-pelo-swagger).
+As chamadas usam a mesma origem do documento. O header Idempotency-Key é obrigatório
+na submissão e deve acompanhar o externalTransactionId escolhido para cada operação.
+O example selector mostra a key sugerida; trocá-lo não altera automaticamente o header.
+
+GET /docs e /docs-json não criam fixtures. Execute atua sobre o banco local, assim
+como curl; os exemplos precisam de uma wallet existente e mantêm dinheiro em strings.
+A UI serve seus próprios arquivos JS/CSS e não envia o contrato a um validador externo.
+Não existe autenticação Swagger adicional nem esquema Bearer fictício.
+
 ## API HTTP disponível
 
 | Método e rota | Comportamento |

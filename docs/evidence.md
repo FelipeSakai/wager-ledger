@@ -40,6 +40,8 @@ Os serviços e volumes do operador não são apagados pelo setup nem pelas fixtu
 | Dois grupos SQS | Contextos distintos percorrem lock, transição e ACK com IDs validados |
 | PROC-017: resposta de COMMIT perdida em TCP real | Banco confirma; cliente recebe indisponibilidade; nova unidade no mesmo pool recupera um efeito e a mesma inbox, sem duplicar outbox |
 | PROC-020: moeda do saldo histórico corrompida | Domínio, GET interno/externo e replay recusam corrupção sem reparar terminais; rejeições legítimas de contexto continuam reidratáveis |
+| QRY-017: Swagger funcional | [Contrato e exemplos](../tests/integration/financial-openapi.test.ts): documento resolvível, assets locais, dinheiro em strings e chamadas reais; Try it out comprovado no navegador |
+| Commit entre leituras de identidade | [Casos de uso](../tests/integration/financial-use-cases.test.ts): regressão determinística de replay/conflitos com duas unidades PostgreSQL reais e efeito único |
 | Estilo e fronteiras | Prettier e check de arquitetura integrados à validação/CI |
 
 Os testes de lifecycle usam preload exclusivo do harness para travar uma dependência;
@@ -50,14 +52,18 @@ pode suprimir a segunda entrega à DLQ; não se afirma entrega exatamente uma ve
 
 ## Execução registrada
 
-639 testes aprovados, zero falhas e 2.452 asserções em macOS arm64 e Ubuntu 24.04 AMD64
-(443 unitários + 196 integrações; 25 arquivos). Formatação, arquitetura, typecheck
-e build aprovados. Tempos e condições no [relatório de entrega](delivery.md).
+Validação final aprovada após a integração Swagger e a regressão de identidade:
+646 testes, 0 falhas e 2.685 asserções em macOS arm64 e Ubuntu 24.04 AMD64
+(443 unitários + 203 integrações; 26 arquivos). Formatação, arquitetura, typecheck
+e build aprovados. Revalidação antes da publicação: mesmos 646 testes e 2.685
+asserções, sem falhas, em 53,88 s. Tempos e condições no [relatório de entrega](delivery.md).
 O ensaio Linux local usa cópia sem node_modules, dist ou .env, em Ubuntu 24.04
 AMD64 por emulação, com binário oficial Bun 1.4.4 e dependências reais.
 Essa execução não é uma execução do GitHub Actions.
-O workflow hospedado só terá resultado depois de publicado; não há badge de aprovação
-nem alegação de CI remota executada nesta revisão local.
+A base a0878d4 passou na [CI hospedada](https://github.com/FelipeSakai/wager-ledger/actions/runs/40572298699),
+com 639 testes antes do Swagger. Para comprovar esta revisão no GitHub, confira
+o SHA correspondente nas [execuções da CI](https://github.com/FelipeSakai/wager-ledger/actions/workflows/ci.yml).
+O resultado da base anterior não comprova as mudanças desta revisão.
 
 A prova de COMMIT perdido está em
 [financial-commit-loss.test.ts](../tests/integration/financial-commit-loss.test.ts),

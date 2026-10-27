@@ -57,6 +57,19 @@ O [guia do módulo](src/modules/financial/README.md) detalha as responsabilidade
 imports de valor/tipo, resolução local, ciclos, fronteiras e status HTTP no núcleo.
 Não é uma prova formal de correção financeira; esta depende também de schema/testes.
 
+## Documentação HTTP interativa
+
+Swagger UI em /docs e OpenAPI 3.0.3 em /docs-json usam @nestjs/swagger 12.0.5,
+fixada e compatível com NestJS 12. Metadados, schemas e exemplos pertencem à
+apresentação HTTP; bootstrap registra o documento e os endpoints operacionais.
+Controllers mantêm os mesmos inputs unknown e a validação existente. A documentação
+não adiciona DTOs de validação ou dependências de framework ao domínio/aplicação.
+
+Money é string decimal nos schemas. Abertura e consulta de wallet têm respostas
+separadas; resultados de submissão distinguem estado por status HTTP. A UI usa a
+mesma origem da API, assets locais e validador externo desativado. Abrir a documentação
+não cria dados financeiros; Execute utiliza os endpoints reais. IdP continua adiado.
+
 ## Dinheiro, wallet e ledger
 
 Money é imutável, com construtor exclusivo Decimal.js 10.6.0 e precisão de trabalho

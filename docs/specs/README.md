@@ -24,7 +24,7 @@ As oito specs possuem implementação e evidências nos recortes descritos abaix
 | SPEC-004 | Reversões e referências pendentes | [004-reversals-and-pending-references.md](004-reversals-and-pending-references.md) | SPEC-002, SPEC-003 | Recorte 0.5 verificado; reversões, agendador e recuperação segura de referência |
 | SPEC-005 | Consumo SQS e inbox | [005-sqs-and-inbox.md](005-sqs-and-inbox.md) | SPEC-003, SPEC-004 | Recorte 0.6 verificado: consumo/inbox/DLQ, perda de heartbeat e crash no envio tardio |
 | SPEC-006 | Outbox e eventos de integração | [006-outbox-and-events.md](006-outbox-and-events.md) | SPEC-002, SPEC-003, SPEC-004 | Recorte 0.3 verificado: classes, enfileiramento e publisher concorrente com retomada |
-| SPEC-007 | Consultas, paginação e reconciliação | [007-queries-and-reconciliation.md](007-queries-and-reconciliation.md) | SPEC-002, SPEC-003 | Verificada no recorte HTTP/SQL 0.3; cursor HMAC e reconciliação consistente |
+| SPEC-007 | Consultas, paginação e reconciliação | [007-queries-and-reconciliation.md](007-queries-and-reconciliation.md) | SPEC-002, SPEC-003 | Recorte 0.4; HTTP/SQL, cursor, reconciliação e Swagger/OpenAPI |
 | SPEC-008 | Observabilidade e health | [008-observability-and-health.md](008-observability-and-health.md) | SPEC-003, SPEC-005, SPEC-006, SPEC-007 | Recorte 0.4 verificado: health/métricas, correlação técnica e deadline completo |
 
 Dependências de implementação também serão descritas em cada spec. Definir consumo e publicação em documentos separados não permite commits financeiros parciais: inbox, saldo, ledger, transação e outbox continuam na mesma transação quando aplicáveis.

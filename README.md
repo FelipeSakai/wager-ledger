@@ -41,6 +41,26 @@ Os workers oferecem os mesmos três endpoints em suas portas. `GET /` só identi
 a aplicação. Para executar a API compilada: `bun run build` e
 `PORT=3001 bun run start:prod`.
 
+## Testar pelo Swagger
+
+Com a API iniciada, abra [Swagger UI](http://127.0.0.1:3001/docs).
+O contrato OpenAPI pode ser baixado em [docs-json](http://127.0.0.1:3001/docs-json).
+As URLs acompanham a mesma porta/origem da API.
+
+1. Em **Wallets → POST /wallets**, clique em **Try it out** e **Execute**. Use um
+   playerId novo para outra demonstração; uma criação duplicada retorna o walletId no 409.
+2. Copie o id retornado. Em **Transações → POST /wagering/transactions**, escolha
+   BET, cole esse walletId e use o mesmo playerId da abertura.
+3. Preencha **Idempotency-Key** conforme o exemplo. Ao trocar para WIN/LOSS/REFUND/
+   ROLLBACK, troque também a key e o externalTransactionId. Para replay, repita ambos
+   com o mesmo corpo. Referências usam o ID externo da transação do provedor.
+4. Consulte saldo, ledger e reconciliação na seção Wallets. Use nextCursor inteiro
+   para continuar a paginação. Valores monetários permanecem strings com duas casas.
+
+O botão Execute chama a API real e pode gravar operações no banco local. Há exemplos
+para os cinco tipos, schemas de entrada/saída, erros e endpoints de health/métricas.
+A UI e seus assets são locais, sem validador externo. A autenticação externa segue adiada.
+
 ## Experimentar a API e o SQS
 
 [Exemplos HTTP](examples/requests.http): abrir wallet com 100.00, apostar 25.00,
@@ -90,8 +110,9 @@ recursos. A [matriz de evidências](docs/evidence.md) aponta cada critério do d
 os testes e o resultado da execução mais recente.
 
 A [CI](.github/workflows/ci.yml) prepara dependências e roda esses checks em
-Ubuntu 24.04, com Bun e Actions fixados. O resultado hospedado estará disponível
-quando esta revisão for publicada; não se declara uma execução remota ainda inexistente.
+Ubuntu 24.04, com Bun e Actions fixados. Os resultados publicados estão nas
+[execuções do workflow](https://github.com/FelipeSakai/wager-ledger/actions/workflows/ci.yml);
+confira o SHA da revisão executada. Mudanças locais posteriores exigem nova execução após publicação.
 
 Para aplicar a formatação: `bun run format`. Prettier é dependência de desenvolvimento
 fixada; migrations históricas ficam fora da reformatação para preservar seu conteúdo.

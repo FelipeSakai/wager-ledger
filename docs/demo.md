@@ -32,9 +32,20 @@ GET da wallet retorna 85.00. Reconciliação deve retornar consistent=true e dif
 O [envelope SQS](../examples/sqs-bet.json) reutiliza a identidade da BET para provar
 replay entre canais. Ajuste walletId/playerId e use `bun run sqs:send`.
 
+## Alternativa interativa: Swagger
+
+Abra [Swagger UI](http://127.0.0.1:3001/docs) com a API em execução. Use Try it out
+para criar a wallet, copie id/playerId para o exemplo BET e preencha Idempotency-Key.
+Troque o exemplo para WIN/LOSS/reversões e atualize a key junto com o ID externo.
+Repetir corpo/key da BET demonstra replay histórico; consultar a wallet mostra saldo atual.
+Finalize pelo endpoint de reconciliação com body {}. O contrato JSON está em /docs-json.
+
 ## Comandos de prova
 
 ```sh
+# Contrato OpenAPI, assets locais e execução dos exemplos documentados
+bun test --timeout 30000 tests/integration/financial-openapi.test.ts
+
 # Contratos HTTP, cursor e reconciliação
 bun test --timeout 30000 tests/integration/financial-http.test.ts
 
@@ -101,4 +112,5 @@ Para parar dependências preservando volumes: `docker compose stop`.
 - Por que auth adiada e LocalStack não equivalem a exposição segura/AWS validada?
 
 Os critérios, testes e resultados estão no [mapa de evidências](evidence.md).
-A CI hospedada só terá resultado quando o workflow for publicado e executado.
+A execução hospedada deve corresponder ao SHA entregue; consulte as
+[execuções do workflow](https://github.com/FelipeSakai/wager-ledger/actions/workflows/ci.yml).

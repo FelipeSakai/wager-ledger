@@ -20,7 +20,7 @@ O [índice de specs](specs/README.md) organiza a definição de cada funcionalid
 | [SPEC-004 — Reversões e pendências](specs/004-reversals-and-pending-references.md) | D05, D10–D15, A01, A03, A05, M04, M10, M12, O03, O04 | Recorte 0.5 verificado; reversões, scheduler e recuperação segura de referência |
 | [SPEC-005 — SQS e inbox](specs/005-sqs-and-inbox.md) | F02, M01–M07, M12, A07, D05, O01–O04 | Recorte 0.6 verificado: inbox/DLQ, redelivery com heartbeat perdido e crash tardio |
 | [SPEC-006 — Outbox e eventos](specs/006-outbox-and-events.md) | M04, M08–M12, D06, D08, O01–O04 | Recorte 0.3 verificado: enfileiramento/publicação, claims/fencing e retomada auditada |
-| [SPEC-007 — Consultas e reconciliação](specs/007-queries-and-reconciliation.md) | A03, A08, A09, A10, A12, D03, D04, D07, O01, O02, O04 | API/SQL verificados 0.3; cursor HMAC e reconciliação consistente |
+| [SPEC-007 — Consultas e reconciliação](specs/007-queries-and-reconciliation.md) | A03, A08, A09, A10, A12, D03, D04, D07, O01, O02, O04 | Recorte 0.4; HTTP/SQL, cursor, reconciliação e Swagger/OpenAPI |
 | [SPEC-008 — Observabilidade e operação](specs/008-observability-and-health.md) | F01–F03, A13, O01–O08, M06, M07, M12 | Recorte 0.4 verificado: health/métricas, correlação técnica e deadline completo |
 
 Os requisitos F04–F08 abrangem múltiplas camadas; verificar Money e os modelos de Wallet/ledger isoladamente não encerra todo esse conjunto. Persistência, transportes e concorrência/idempotência possuem evidências próprias nas suítes indicadas abaixo.
@@ -115,6 +115,7 @@ Todo requisito possui ao menos uma spec responsável ou de suporte na tabela. Es
 | O06 | Arquitetura, decisões, trade-offs e limitações documentados | ARCHITECTURE.md, ADRs e specs | Estado atual, recortes históricos e limites da entrega separados | Documentado e revisado na preparação da entrega |
 | O07 | Autenticação externa omitida com decisão e ponto de extensão | ProviderIdentityPort, guard e composição local explícita | Guard invoca porta injetável; testes permitem negar acesso; implementação local não autentica | IdP adiado; ponto de extensão implementado |
 | O08 | Carga opcional com ambiente e p50/p95/p99 | Fora do mínimo inicial | Se aprovado: script, metodologia e números medidos | Opcional; não iniciado |
+| O09 | Melhoria autorizada: documentação HTTP interativa e contrato exportável | presentation/http/openapi-*.ts e bootstrap/http-openapi.ts; SPEC-007 | financial-openapi.test.ts: documento, assets locais, contratos e exemplos via HTTP/PostgreSQL; prova Try it out no navegador | Implementado e verificado em HTTP/PostgreSQL e Try it out no navegador |
 
 ## Critério para mudar o estado de um requisito
 

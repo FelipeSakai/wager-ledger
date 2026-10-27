@@ -63,3 +63,11 @@ Testes do domínio ficam junto às classes; integração e processos estão em t
 `bun run check:architecture` verifica imports, ciclos e presença de status HTTP no
 núcleo. Esse check também integra `bun run typecheck`. A regra é estática; correção
 financeira continua sendo comprovada pelos testes com PostgreSQL e LocalStack.
+
+## Swagger/OpenAPI
+
+Os arquivos presentation/http/openapi-*.ts mantêm schemas, exemplos e decoradores
+compostos das operações. FinancialController apenas associa esses metadados aos
+handlers; o bootstrap configura /docs e /docs-json com a mesma origem da API.
+Documentação não substitui validação: DTOs desconhecidos continuam sendo tratados
+pelos validadores e casos de uso existentes. Nenhum tipo Swagger entra no núcleo.

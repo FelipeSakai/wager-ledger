@@ -129,3 +129,12 @@ passaram estilo, arquitetura (84 fontes), typecheck e build. API/três workers
 reiniciados, live/ready/metrics 200 nas portas 3001/3101/3102/3103. CI hospedada
 não executada. Esse resultado antecede o reforço da moeda do snapshot, a
 classificação de desconexão sem código e a prova TCP de perda da resposta de COMMIT.
+
+## Revisão publicada antes do Swagger — 27/10/2026
+
+Base publicada a0878d4, organizada em nove commits por assunto. Validação local:
+639 testes, 0 falhas, 2.452 asserções em 25 arquivos; 443 unitários e 196 integrações.
+macOS arm64: 49,43 s; Ubuntu 24.04 AMD64 emulado: 99,96 s. Arquitetura com 85 fontes.
+A [execução hospedada 40572298699](https://github.com/FelipeSakai/wager-ledger/actions/runs/40572298699)
+confirmou sucesso no mesmo SHA: 639 testes e 2.452 asserções, 66,76 s na etapa de testes.
+Essa prova antecede a revisão Swagger/OpenAPI.
