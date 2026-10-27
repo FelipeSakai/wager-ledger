@@ -34,7 +34,9 @@
     "worker:references": "bun src/bootstrap/reference-worker.ts",
     "references:failures": "bun scripts/reference-failures.ts",
     "check:architecture": "bun scripts/check-architecture.ts",
-    "setup": "bun scripts/setup-local.ts"
+    "setup": "bun scripts/setup-local.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\" \"*.json\" \".github/**/*.yml\" \"examples/*.json\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\" \"*.json\" \".github/**/*.yml\" \"examples/*.json\""
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "3.1157.0",
