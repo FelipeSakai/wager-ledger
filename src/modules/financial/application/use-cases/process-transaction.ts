@@ -55,20 +55,20 @@ export class ProcessTransaction {
             async (persistence) => {
               if (delivery) await persistence.checkInbox(delivery);
               const replay = async (): Promise<WagerState | null> => {
-                const byKey = await persistence.findByKey(key);
-                if (byKey) {
-                  if (byKey.payloadHash !== hash || byKey.payloadHashVersion !== 1)
-                    throw new FinancialError('IDEMPOTENCY_CONFLICT');
-                  return byKey;
-                }
-                if (
-                  await persistence.findByExternalId(
+                // READ COMMITTED may observe another commit between these reads.
+                // Either identity can find the same winner; verify its key and payload.
+                const found =
+                  (await persistence.findByKey(key)) ??
+                  (await persistence.findByExternalId(
                     command.providerId,
                     command.externalTransactionId,
-                  )
-                )
+                  ));
+                if (!found) return null;
+                if (found.idempotencyKey !== key)
                   throw new FinancialError('EXTERNAL_TRANSACTION_CONFLICT');
-                return null;
+                if (found.payloadHash !== hash || found.payloadHashVersion !== 1)
+                  throw new FinancialError('IDEMPOTENCY_CONFLICT');
+                return found;
               };
               const found = await replay();
               if (found) context.transactionId = found.id;

@@ -171,6 +171,52 @@ describe('Financial application — real PostgreSQL', () => {
     await balance(wallet.id, '100.00', 1);
     expect(await counts(wallet.id)).toEqual({ transactions: 2, ledger: 1, events: 3 });
   });
+  test.each(['same-payload', 'changed-payload', 'different-key'] as const)(
+    'PROC-003/006/007: a commit between identity reads preserves the correct result (%s)',
+    async (scenario) => {
+      const wallet = await open();
+      const input = command(wallet);
+      const key = randomUUID();
+      let inserted = false;
+      let winner: Awaited<ReturnType<ProcessTransaction['execute']>> | undefined;
+      const ordered = intercept('findByKey', async () => {
+        if (inserted) return;
+        inserted = true;
+        // The first read observed no key. Another real SQL unit commits before
+        // the next external-identity read; the first unit holds no wallet lock yet.
+        winner = await processWith().execute(
+          scenario === 'changed-payload'
+            ? { ...input, money: { amount: '26.00', currency: 'BRL' } }
+            : input,
+          scenario === 'different-key' ? randomUUID() : key,
+        );
+      });
+      const outcome = await processWith(ordered)
+        .execute(input, key)
+        .then(
+          (value) => ({ value, error: undefined }),
+          (error) => ({ value: undefined, error }),
+        );
+      expect(inserted).toBe(true);
+      if (scenario === 'same-payload') {
+        expect(outcome.error).toBeUndefined();
+        expect(outcome.value).toMatchObject({
+          transactionId: winner!.transactionId,
+          idempotentReplay: true,
+          balance: { amount: '75.00', currency: 'BRL' },
+        });
+      } else {
+        expect(outcome.error).toMatchObject({
+          code:
+            scenario === 'changed-payload'
+              ? 'IDEMPOTENCY_CONFLICT'
+              : 'EXTERNAL_TRANSACTION_CONFLICT',
+        });
+      }
+      expect(await counts(wallet.id)).toEqual({ transactions: 2, ledger: 2, events: 4 });
+      await balance(wallet.id, scenario === 'changed-payload' ? '74.00' : '75.00', 2);
+    },
+  );
   test('legacy persisted replies retain their historical snapshot without changing immutable records', async () => {
     const wallet = await open();
     const legacyUnit: FinancialUnitOfWork = {

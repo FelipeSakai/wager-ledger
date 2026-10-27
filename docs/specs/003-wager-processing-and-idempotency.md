@@ -80,6 +80,12 @@ validar moeda e conserva o saldo da wallet consultada. Essas rejeições antecip
 não autorizam inferir a moeda da wallet a partir do comando incompatível. Corrupção
 detectada retorna erro de integridade, sem reparar o snapshot ou reaplicar efeitos.
 
+Em READ COMMITTED, outra unidade pode confirmar entre a leitura por key e a
+leitura por identidade externa. Encontrar o vencedor por qualquer consulta exige
+comparar key/hash: mesma key e hash é replay; mesma key com hash diferente é
+IDEMPOTENCY_CONFLICT; identidade externa com outra key é EXTERNAL_TRANSACTION_CONFLICT.
+A existência da identidade externa, isoladamente, não comprova conflito.
+
 Antes de terminal, uma pendência pode evoluir. Um reenvio de PENDING_REFERENCE consulta o estado durável corrente sem disparar novo efeito; o worker da SPEC-004 continua responsável pela execução. Consultas retornam o recurso atual conforme SPEC-007.
 
 ## Regras por operação recomendadas — PROC-D02
